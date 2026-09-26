@@ -29,22 +29,9 @@
     background: var(--primary);
     color: white;
     padding: 18px 20px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
   }
   header h1 { font-size: 18px; margin: 0; font-weight: 600; }
-  header .userbar { display: flex; align-items: center; gap: 12px; font-size: 14px; }
-  header button.logout {
-    background: rgba(255,255,255,0.15);
-    border: 1px solid rgba(255,255,255,0.4);
-    color: white;
-    padding: 6px 12px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 13px;
-  }
-  header button.logout:hover { background: rgba(255,255,255,0.28); }
+  header p { margin: 4px 0 0; font-size: 13px; opacity: 0.85; }
   main {
     max-width: 640px;
     margin: 0 auto;
@@ -81,15 +68,6 @@
   }
   button.primary:hover { background: var(--primary-dark); }
   button.primary:disabled { opacity: 0.6; cursor: default; }
-  button.link {
-    background: none;
-    border: none;
-    color: var(--primary);
-    cursor: pointer;
-    font-size: 13px;
-    text-decoration: underline;
-    padding: 0;
-  }
   .msg {
     padding: 10px 12px;
     border-radius: 6px;
@@ -116,14 +94,11 @@
     border-radius: 8px;
     padding: 12px 14px;
     margin-bottom: 10px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 10px;
   }
-  .appt .info { font-size: 14px; }
+  .appt .info { font-size: 14px; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
   .appt .info .doc { font-weight: 600; }
   .appt .info .when { color: var(--text-muted); font-size: 13px; }
+  .appt .actions { display: flex; gap: 8px; margin-top: 10px; }
   .badge {
     font-size: 11px;
     padding: 3px 8px;
@@ -135,21 +110,31 @@
   .badge.CANCELADA { background: #fdecea; color: #c62828; }
   .badge.ATENDIDA { background: #e8f5e9; color: #2e7d32; }
   .badge.NO_ASISTIO { background: #fff3e0; color: #e65100; }
+  button.secondary {
+    background: none;
+    border: 1px solid var(--primary);
+    color: var(--primary);
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  button.secondary:hover { background: #eef4f8; }
   button.cancel-btn {
     background: none;
     border: 1px solid var(--error);
     color: var(--error);
-    padding: 5px 10px;
+    padding: 6px 10px;
     border-radius: 6px;
     font-size: 12px;
     cursor: pointer;
   }
   button.cancel-btn:hover { background: var(--error-bg); }
   .empty { color: var(--text-muted); font-size: 13px; text-align: center; padding: 10px 0; }
-  .auth-tabs { display: flex; gap: 8px; margin-bottom: 16px; }
-  .auth-tabs button {
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .tabs button {
     flex: 1;
-    padding: 8px;
+    padding: 10px;
     border: 1px solid var(--border);
     background: var(--bg);
     border-radius: 6px;
@@ -157,94 +142,79 @@
     font-size: 14px;
     color: var(--text-muted);
   }
-  .auth-tabs button.active { background: var(--primary); color: white; border-color: var(--primary); }
-  #app-section { display: none; }
+  .tabs button.active { background: var(--primary); color: white; border-color: var(--primary); }
+  .hint { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
   .spinner-text { font-size: 13px; color: var(--text-muted); margin-top: 10px; }
 </style>
 </head>
 <body>
 
 <header>
-  <h1>🦷 Reservar turno</h1>
-  <div class="userbar" id="userbar" style="display:none;">
-    <span id="user-greeting"></span>
-    <button class="logout" onclick="logout()">Cerrar sesión</button>
-  </div>
+  <h1>🦷 Clínica — Turnos</h1>
+  <p>No hace falta crear una cuenta: alcanza con tu número de documento.</p>
 </header>
 
 <main>
 
-  <!-- ===================== AUTENTICACIÓN ===================== -->
-  <div id="auth-section">
-    <div class="card">
-      <div class="auth-tabs">
-        <button id="tab-login" class="active" onclick="showTab('login')">Iniciar sesión</button>
-        <button id="tab-register" onclick="showTab('register')">Registrarme</button>
-      </div>
-
-      <div id="login-form">
-        <label>Usuario</label>
-        <input type="text" id="login-username" autocomplete="username">
-        <label>Contraseña</label>
-        <input type="password" id="login-password" autocomplete="current-password">
-        <button class="primary" onclick="login()">Iniciar sesión</button>
-        <div class="msg" id="login-msg"></div>
-      </div>
-
-      <div id="register-form" style="display:none;">
-        <label>Nombre</label>
-        <input type="text" id="reg-first-name">
-        <label>Apellido</label>
-        <input type="text" id="reg-last-name">
-        <label>Usuario</label>
-        <input type="text" id="reg-username">
-        <label>Email</label>
-        <input type="email" id="reg-email">
-        <label>Teléfono</label>
-        <input type="text" id="reg-phone">
-        <label>Contraseña</label>
-        <input type="password" id="reg-password">
-        <button class="primary" onclick="register()">Crear mi cuenta</button>
-        <div class="msg" id="register-msg"></div>
-      </div>
-    </div>
+  <div class="tabs">
+    <button id="tab-reservar" class="active" onclick="showTab('reservar')">Reservar un turno</button>
+    <button id="tab-consultar" onclick="showTab('consultar')">Consultar / cancelar mi turno</button>
   </div>
 
-  <!-- ===================== APP (logueado) ===================== -->
-  <div id="app-section">
+  <!-- ===================== RESERVAR ===================== -->
+  <div id="panel-reservar">
+    <div class="card">
+      <h2>Tus datos</h2>
+      <label>Número de documento (sin puntos ni comas)</label>
+      <input type="text" id="doc-number" inputmode="numeric" placeholder="Ej: 12345678">
+      <label>Nombre y apellido</label>
+      <input type="text" id="doc-name">
+      <label>Teléfono</label>
+      <input type="text" id="doc-phone">
+      <label>Correo electrónico</label>
+      <input type="email" id="doc-email">
+    </div>
 
     <div class="card">
-      <h2>Reservar un turno</h2>
+      <h2>Elegí doctor, fecha y horario</h2>
       <label>Doctor</label>
       <select id="doctor-select"></select>
       <label>Fecha</label>
       <input type="date" id="date-input">
       <button class="primary" onclick="buscarHorarios()">Ver horarios disponibles</button>
+      <div class="hint">Solo se permite un turno por día por paciente.</div>
       <div id="slots-container"></div>
       <div class="msg" id="booking-msg"></div>
     </div>
+  </div>
 
+  <!-- ===================== CONSULTAR ===================== -->
+  <div id="panel-consultar" style="display:none;">
     <div class="card">
-      <h2>Mis citas</h2>
-      <div id="appointments-list"><div class="empty">Cargando...</div></div>
+      <h2>Buscar mis turnos</h2>
+      <label>Número de documento (sin puntos ni comas)</label>
+      <input type="text" id="lookup-doc" inputmode="numeric" placeholder="Ej: 12345678">
+      <button class="primary" onclick="buscarMisTurnos()">Buscar</button>
+      <div class="msg" id="lookup-msg"></div>
     </div>
-
+    <div class="card" id="mis-turnos-card" style="display:none;">
+      <h2>Tus turnos</h2>
+      <div id="appointments-list"></div>
+    </div>
   </div>
 
 </main>
 
 <script>
 const API = window.location.origin + "/api";
-let accessToken = localStorage.getItem("clinica_access") || null;
 let doctors = [];
 let selectedSlot = null;
-let selectedDoctorId = null;
 
 function showTab(tab) {
-  document.getElementById("tab-login").classList.toggle("active", tab === "login");
-  document.getElementById("tab-register").classList.toggle("active", tab === "register");
-  document.getElementById("login-form").style.display = tab === "login" ? "block" : "none";
-  document.getElementById("register-form").style.display = tab === "register" ? "block" : "none";
+  document.getElementById("tab-reservar").classList.toggle("active", tab === "reservar");
+  document.getElementById("tab-consultar").classList.toggle("active", tab === "consultar");
+  document.getElementById("panel-reservar").style.display = tab === "reservar" ? "block" : "none";
+  document.getElementById("panel-consultar").style.display = tab === "consultar" ? "block" : "none";
 }
 
 function showMsg(elId, text, isError) {
@@ -259,9 +229,8 @@ function clearMsg(elId) {
   el.className = "msg";
 }
 
-async function apiCall(method, path, body, auth) {
+async function apiCall(method, path, body) {
   const headers = { "Content-Type": "application/json" };
-  if (auth && accessToken) headers["Authorization"] = "Bearer " + accessToken;
   const resp = await fetch(API + path, {
     method,
     headers,
@@ -270,51 +239,6 @@ async function apiCall(method, path, body, auth) {
   let data = null;
   try { data = await resp.json(); } catch (e) { /* sin cuerpo */ }
   return { status: resp.status, data };
-}
-
-async function register() {
-  clearMsg("register-msg");
-  const body = {
-    username: document.getElementById("reg-username").value.trim(),
-    email: document.getElementById("reg-email").value.trim(),
-    password: document.getElementById("reg-password").value,
-    first_name: document.getElementById("reg-first-name").value.trim(),
-    last_name: document.getElementById("reg-last-name").value.trim(),
-    phone: document.getElementById("reg-phone").value.trim(),
-  };
-  const { status, data } = await apiCall("POST", "/users/register/", body, false);
-  if (status === 201) {
-    showMsg("register-msg", "¡Cuenta creada! Ahora iniciá sesión con tu usuario y contraseña.", false);
-    document.getElementById("login-username").value = body.username;
-    setTimeout(() => showTab("login"), 1200);
-  } else {
-    showMsg("register-msg", extractError(data), true);
-  }
-}
-
-async function login() {
-  clearMsg("login-msg");
-  const username = document.getElementById("login-username").value.trim();
-  const password = document.getElementById("login-password").value;
-  const { status, data } = await apiCall("POST", "/auth/login/", { username, password }, false);
-  if (status === 200) {
-    accessToken = data.access;
-    localStorage.setItem("clinica_access", accessToken);
-    localStorage.setItem("clinica_refresh", data.refresh);
-    await enterApp();
-  } else {
-    showMsg("login-msg", "Usuario o contraseña incorrectos.", true);
-  }
-}
-
-function logout() {
-  accessToken = null;
-  localStorage.removeItem("clinica_access");
-  localStorage.removeItem("clinica_refresh");
-  document.getElementById("app-section").style.display = "none";
-  document.getElementById("userbar").style.display = "none";
-  document.getElementById("auth-section").style.display = "block";
-  document.getElementById("login-password").value = "";
 }
 
 function extractError(data) {
@@ -326,25 +250,8 @@ function extractError(data) {
   return "Ocurrió un error inesperado.";
 }
 
-async function enterApp() {
-  const me = await apiCall("GET", "/users/me/", undefined, true);
-  if (me.status !== 200) { logout(); return; }
-  document.getElementById("auth-section").style.display = "none";
-  document.getElementById("app-section").style.display = "block";
-  document.getElementById("userbar").style.display = "flex";
-  document.getElementById("user-greeting").textContent =
-    "Hola, " + (me.data.first_name || me.data.username);
-
-  const today = new Date().toISOString().slice(0, 10);
-  document.getElementById("date-input").min = today;
-  document.getElementById("date-input").value = today;
-
-  await cargarDoctores();
-  await cargarMisCitas();
-}
-
 async function cargarDoctores() {
-  const { status, data } = await apiCall("GET", "/doctors/", undefined, true);
+  const { status, data } = await apiCall("GET", "/doctors/");
   const select = document.getElementById("doctor-select");
   select.innerHTML = "";
   if (status !== 200) return;
@@ -355,8 +262,6 @@ async function cargarDoctores() {
     opt.textContent = (d.full_name || ("Doctor #" + d.id)) + " — " + (d.specialty || "");
     select.appendChild(opt);
   });
-  if (doctors.length) selectedDoctorId = doctors[0].id;
-  select.onchange = () => { selectedDoctorId = select.value; };
 }
 
 async function buscarHorarios() {
@@ -371,9 +276,7 @@ async function buscarHorarios() {
     showMsg("booking-msg", "Elegí un doctor y una fecha.", true);
     return;
   }
-  const { status, data } = await apiCall(
-    "GET", `/doctors/${doctorId}/availability/?date=${date}`, undefined, true
-  );
+  const { status, data } = await apiCall("GET", `/doctors/${doctorId}/availability/?date=${date}`);
   if (status !== 200) {
     container.innerHTML = "";
     showMsg("booking-msg", extractError(data), true);
@@ -419,31 +322,54 @@ function mostrarConfirmacion(doctorId) {
 async function confirmarReserva(doctorId) {
   clearMsg("booking-msg");
   const notes = document.getElementById("booking-notes")?.value || "";
-  const { status, data } = await apiCall("POST", "/appointments/", {
+  const body = {
+    document_number: document.getElementById("doc-number").value.trim(),
+    name: document.getElementById("doc-name").value.trim(),
+    phone: document.getElementById("doc-phone").value.trim(),
+    email: document.getElementById("doc-email").value.trim(),
     doctor: doctorId,
     start_datetime: selectedSlot.start_datetime,
     notes,
-  }, true);
+  };
+  if (!body.document_number || !body.name || !body.phone || !body.email) {
+    showMsg("booking-msg", "Completá tu documento, nombre, teléfono y correo antes de confirmar.", true);
+    return;
+  }
+  const { status, data } = await apiCall("POST", "/appointments/", body);
   if (status === 201) {
-    showMsg("booking-msg", "¡Turno reservado y confirmado!", false);
+    showMsg("booking-msg", "¡Turno reservado y confirmado! Guardá tu número de documento para consultarlo después.", false);
     document.getElementById("slots-container").innerHTML = "";
     selectedSlot = null;
-    await cargarMisCitas();
   } else {
     showMsg("booking-msg", extractError(data), true);
   }
 }
 
-async function cargarMisCitas() {
-  const container = document.getElementById("appointments-list");
-  const { status, data } = await apiCall("GET", "/appointments/mine/", undefined, true);
+async function buscarMisTurnos() {
+  clearMsg("lookup-msg");
+  const doc = document.getElementById("lookup-doc").value.trim();
+  const card = document.getElementById("mis-turnos-card");
+  if (!doc) {
+    showMsg("lookup-msg", "Ingresá tu número de documento.", true);
+    card.style.display = "none";
+    return;
+  }
+  const { status, data } = await apiCall("GET", `/patients/${encodeURIComponent(doc)}/appointments/`);
+  if (status === 404) {
+    showMsg("lookup-msg", "No encontramos ningún paciente con ese número de documento.", true);
+    card.style.display = "none";
+    return;
+  }
   if (status !== 200) {
-    container.innerHTML = '<div class="empty">No se pudieron cargar tus citas.</div>';
+    showMsg("lookup-msg", extractError(data), true);
+    card.style.display = "none";
     return;
   }
   const citas = data.results || data;
+  card.style.display = "block";
+  const container = document.getElementById("appointments-list");
   if (!citas.length) {
-    container.innerHTML = '<div class="empty">Todavía no tenés citas reservadas.</div>';
+    container.innerHTML = '<div class="empty">Todavía no tenés turnos.</div>';
     return;
   }
   container.innerHTML = "";
@@ -451,41 +377,62 @@ async function cargarMisCitas() {
     const fecha = new Date(c.start_datetime);
     const fechaStr = fecha.toLocaleDateString("es-AR");
     const horaStr = fecha.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" });
+    const puedeGestionar = c.status === "CONFIRMADA" && fecha > new Date();
     const div = document.createElement("div");
     div.className = "appt";
-    const puedeCancelar = c.status === "CONFIRMADA" && fecha > new Date();
     div.innerHTML = `
       <div class="info">
-        <div class="doc">${c.doctor_name}</div>
-        <div class="when">${fechaStr} · ${horaStr}</div>
-      </div>
-      <div style="display:flex; align-items:center; gap:8px;">
+        <div>
+          <div class="doc">${c.doctor_name}</div>
+          <div class="when">${fechaStr} · ${horaStr}</div>
+        </div>
         <span class="badge ${c.status}">${c.status}</span>
-        ${puedeCancelar ? `<button class="cancel-btn" data-id="${c.id}">Cancelar</button>` : ""}
       </div>
+      ${puedeGestionar ? `
+        <div class="actions">
+          <button class="secondary" data-id="${c.id}" data-action="edit">Reprogramar</button>
+          <button class="cancel-btn" data-id="${c.id}" data-action="cancel">Cancelar</button>
+        </div>
+      ` : ""}
     `;
     container.appendChild(div);
   });
-  container.querySelectorAll(".cancel-btn").forEach(btn => {
-    btn.onclick = () => cancelarCita(btn.dataset.id);
+  container.querySelectorAll("[data-action='cancel']").forEach(btn => {
+    btn.onclick = () => cancelarTurno(doc, btn.dataset.id);
+  });
+  container.querySelectorAll("[data-action='edit']").forEach(btn => {
+    btn.onclick = () => reprogramarTurno(doc, btn.dataset.id);
   });
 }
 
-async function cancelarCita(id) {
-  if (!confirm("¿Seguro que querés cancelar esta cita?")) return;
-  const { status, data } = await apiCall("PATCH", `/appointments/${id}/cancel/`, {}, true);
+async function cancelarTurno(doc, id) {
+  if (!confirm("¿Seguro que querés cancelar este turno?")) return;
+  const { status, data } = await apiCall("PATCH", `/patients/${encodeURIComponent(doc)}/appointments/${id}/cancel/`, {});
   if (status === 200) {
-    await cargarMisCitas();
+    await buscarMisTurnos();
   } else {
     alert(extractError(data));
   }
 }
 
-// Al cargar la página: si ya había un token guardado, entrar directo.
-(async function init() {
-  if (accessToken) {
-    await enterApp();
+async function reprogramarTurno(doc, id) {
+  const nuevaFechaHora = prompt("Nueva fecha y hora (formato AAAA-MM-DDTHH:MM), por ejemplo 2026-10-05T09:00:");
+  if (!nuevaFechaHora) return;
+  const { status, data } = await apiCall(
+    "PATCH", `/patients/${encodeURIComponent(doc)}/appointments/${id}/`, { start_datetime: nuevaFechaHora }
+  );
+  if (status === 200) {
+    await buscarMisTurnos();
+  } else {
+    alert(extractError(data));
   }
+}
+
+(async function init() {
+  const today = new Date().toISOString().slice(0, 10);
+  document.getElementById("date-input").min = today;
+  document.getElementById("date-input").value = today;
+  await cargarDoctores();
 })();
 </script>
 

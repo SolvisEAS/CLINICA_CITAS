@@ -7,9 +7,12 @@ User = get_user_model()
 
 class RegisterSerializer(serializers.ModelSerializer):
     """
-    Registro público de pacientes. Los usuarios con role=DOCTOR o
-    role=ADMIN los crea un administrador desde /admin/ — no existe un
-    endpoint público para auto-asignarse esos roles.
+    Registro público con role=PACIENTE. Ya no lo usa el flujo de
+    reserva (el paciente no tiene cuenta ni login — ver
+    apps.patients.Patient), se deja por compatibilidad. Los usuarios
+    con role=DOCTOR o role=ADMIN los crea un administrador desde
+    /admin/ — no existe un endpoint público para auto-asignarse esos
+    roles.
     """
 
     password = serializers.CharField(write_only=True, validators=[validate_password])

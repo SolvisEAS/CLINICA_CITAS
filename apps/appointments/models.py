@@ -1,10 +1,7 @@
-from django.conf import settings
 from django.contrib.postgres.constraints import ExclusionConstraint
 from django.contrib.postgres.fields import DateTimeRangeField
 from django.db import models
 from django.db.models import Q
-
-from apps.doctors.models import Doctor
 
 
 class Appointment(models.Model):
@@ -19,8 +16,14 @@ class Appointment(models.Model):
     El campo `period` es un rango calculado a partir de
     start_datetime/end_datetime (se mantiene sincronizado en save())
     únicamente para que PostgreSQL pueda aplicar esa restricción; toda
-    la API sigue trabajando con start_datetime/end_datetime, tal como
-    pide el esquema del documento.
+    la API sigue trabajando con start_datetime/end_datetime.
+
+    `patient` es un `patients.Patient`: el paciente no tiene cuenta ni
+    login, se identifica con su número de documento (ver esa app). El
+    límite de "una cita por paciente por día" se valida en
+    apps.appointments.services / serializers, con un lock a nivel de
+    fila sobre el paciente para cubrir el caso de dos reservas casi
+    simultáneas con la misma cédula.
     """
 
     class Status(models.TextChoices):
@@ -30,13 +33,19 @@ class Appointment(models.Model):
         NO_ASISTIO = "NO_ASISTIO", "No asistió"
 
     patient = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="appointments_as_patient"
+        "patients.Patient", on_delete=models.CASCADE, related_name="appointments"
     )
-    doctor = models.ForeignKey(Doctor, on_delete=models.CASCADE, related_name="appointments")
+    doctor = models.ForeignKey(
+        "doctors.Doctor", on_delete=models.CASCADE, related_name="appointments"
+    )
     start_datetime = models.DateTimeField()
     end_datetime = models.DateTimeField()
     period = DateTimeRangeField(editable=False)
-    status = models.CharField(max_length=20, choices=Status.choices, default=Status.CONFIRMADA)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.CONFIRMADA,
+    )
     notes = models.TextField("Notas", blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

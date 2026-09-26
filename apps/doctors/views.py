@@ -8,8 +8,9 @@ from .serializers import DoctorSerializer
 
 class DoctorViewSet(viewsets.ModelViewSet):
     """
-    GET /api/doctors/ y /api/doctors/{id}/ — cualquier usuario autenticado
-    (los pacientes necesitan ver la lista de doctores para reservar).
+    GET /api/doctors/ y /api/doctors/{id}/ — público, sin login (el
+    paciente necesita ver la lista de doctores para reservar y no
+    tiene cuenta).
 
     POST/PUT/PATCH/DELETE — solo ADMIN.
     """
@@ -22,12 +23,16 @@ class DoctorViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action in ("list", "retrieve"):
-            return [permissions.IsAuthenticated()]
+            return [permissions.AllowAny()]
         return [permissions.IsAuthenticated(), IsAdminRole()]
 
     def get_queryset(self):
         qs = super().get_queryset()
-        # Los pacientes solo necesitan ver doctores activos para reservar.
-        if self.request.user.role == "PACIENTE" and self.action == "list":
+        user = self.request.user
+        # Solo un ADMIN o DOCTOR autenticado necesita ver los inactivos
+        # también; cualquier otra persona (paciente sin cuenta incluido)
+        # solo ve los activos al listar.
+        is_staff = user.is_authenticated and user.role in ("ADMIN", "DOCTOR")
+        if self.action == "list" and not is_staff:
             qs = qs.filter(active=True)
         return qs
