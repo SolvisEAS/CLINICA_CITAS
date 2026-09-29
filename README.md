@@ -9,36 +9,51 @@ momento de desplegarlo.
 
 ## Decisiones tomadas para este MVP
 
+- **El paciente no tiene cuenta ni login.** Se identifica con cuatro
+  datos básicos: número de documento (cédula, sin puntos ni comas —
+  además es la clave primaria del modelo `Patient`), nombre y
+  apellido, teléfono y correo. Con esos cuatro datos alcanza para
+  reservar; con la cédula puede después volver a consultar, editar
+  (reprogramar) o cancelar su turno — sin usuario ni contraseña.
+- **Un paciente solo puede tener un turno activo por día**, sin
+  importar el doctor. Se valida en el backend con un lock a nivel de
+  fila sobre el paciente (para cubrir el caso de dos reservas casi
+  simultáneas con la misma cédula).
 - **Duración de citas fija por doctor** (`Doctor.appointment_duration_minutes`),
   no variable por tipo de tratamiento. Se puede migrar a duración
   variable más adelante sin rehacer el núcleo.
-- **Confirmación automática**: una cita queda `CONFIRMADA` apenas el
-  paciente reserva un horario disponible, sin aprobación previa del
-  doctor.
+- **Confirmación automática**: una cita queda `CONFIRMADA` apenas se
+  reserva un horario disponible, sin aprobación previa del doctor.
 - **Prevención de doble reserva a nivel de base de datos**: además de
   validar en el backend antes de confirmar, PostgreSQL tiene una
-  restricción (`ExclusionConstraint`) que hace *físicamente imposible*
-  que existan dos citas activas del mismo doctor con horarios
-  solapados, incluso si dos pacientes reservan casi al mismo tiempo.
-  Esto se probó a propósito durante el desarrollo (ver sección de
-  verificación más abajo).
+  restricción (`ExclusionConstraint`, habilitada con la extensión
+  `btree_gist` que instala sola la migración inicial) que hace
+  *físicamente imposible* que existan dos citas activas del mismo
+  doctor con horarios solapados, incluso si dos pacientes reservan
+  casi al mismo tiempo.
+- **Historial de tratamientos por paciente** (`TreatmentRecord`): lo
+  carga el doctor (o un administrador) después de una consulta. El
+  paciente no lo ve ni lo edita, ya que no tiene cuenta.
 - **Notificaciones**: por ahora solo por **email** (confirmación +
   1 recordatorio, configurable, por defecto 24hs antes). El modelo ya
   distingue un canal `WHATSAPP` para cuando se defina el proveedor,
   pero no está implementado todavía — el documento base lo marca
   explícitamente como una integración a resolver aparte.
 - **No incluye todavía** (quedan para una fase siguiente, tal como
-  sugiere el documento): historia clínica, ficha odontológica, pagos,
-  facturación, reportes avanzados, Google Calendar, WhatsApp.
+  sugiere el documento): pagos, facturación, reportes avanzados,
+  Google Calendar, WhatsApp, verificación de identidad del paciente
+  más allá de la cédula.
 
 ## Roles
 
-- **Paciente**: se registra solo, reserva/cancela sus propias citas.
+- **Paciente**: sin cuenta ni login. Reserva indicando sus 4 datos
+  básicos; con su cédula vuelve a consultar, edita o cancela su turno.
 - **Doctor**: lo crea un administrador desde `/admin/` (usuario con
   `role=DOCTOR` + un perfil en el modelo `Doctor`). Gestiona su propio
-  horario semanal, sus bloqueos, y su agenda.
-- **Administrador**: gestiona doctores, horarios y usuarios desde
-  `/admin/`.
+  horario semanal, sus bloqueos, su agenda, la lista de sus pacientes
+  y el historial de tratamientos de cada uno.
+- **Administrador**: gestiona doctores, horarios, usuarios y pacientes
+  desde `/admin/`.
 
 ## 1. Requisitos previos
 
@@ -117,38 +132,50 @@ Por ahora esto se hace desde `/admin/` (http://127.0.0.1:8000/admin/):
 
 ## 4. Probar la API (checklist)
 
-Guardá el token de un login en una variable:
+El paciente **no necesita login** para nada de lo siguiente — solo el
+doctor/admin lo necesita (login normal con usuario/contraseña vía
+`POST /api/auth/login/`).
 
-```powershell
-$TOKEN = (curl -Method POST http://127.0.0.1:8000/api/auth/login/ -ContentType "application/json" -Body '{"username":"tu_usuario","password":"tu_clave"}').access
-```
-
-(o usá `curl`/Postman como prefieras)
-
-- [ ] **Registro de paciente**: `POST /api/users/register/`
-- [ ] **Login**: `POST /api/auth/login/` devuelve `access` + `refresh`
-- [ ] **Listar doctores**: `GET /api/doctors/`
-- [ ] **Disponibilidad**: `GET /api/doctors/<id>/availability/?date=YYYY-MM-DD`
+- [ ] **Listar doctores** (público): `GET /api/doctors/`
+- [ ] **Disponibilidad** (público): `GET /api/doctors/<id>/availability/?date=YYYY-MM-DD`
       devuelve los horarios libres, ya descontando el horario semanal,
       los bloqueos y las citas existentes.
-- [ ] **Reservar**: `POST /api/appointments/` con `{"doctor": <id>, "start_datetime": "..."}`
-      → la cita queda `CONFIRMADA` al instante.
+- [ ] **Reservar** (público, sin login): `POST /api/appointments/` con
+      `{"document_number": "...", "name": "...", "phone": "...", "email": "...", "doctor": <id>, "start_datetime": "..."}`
+      → crea (o actualiza) al paciente por su cédula y la cita queda
+      `CONFIRMADA` al instante.
 - [ ] **Doble reserva rechazada**: reservar el mismo horario de nuevo
-      devuelve `400` con "Ese horario ya no está disponible."
-- [ ] **Mis citas**: `GET /api/appointments/mine/`
+      (con otra cédula) devuelve `400` con "Ese horario ya no está disponible."
+- [ ] **Un turno por día**: la misma cédula intentando reservar dos
+      turnos el mismo día devuelve `400`.
+- [ ] **Consultar mis turnos** (público, por cédula):
+      `GET /api/patients/<document_number>/appointments/`
+- [ ] **Editar/reprogramar** (público, por cédula):
+      `PATCH /api/patients/<document_number>/appointments/<id>/` con
+      `{"start_datetime": "..."}` y/o `{"notes": "..."}`
+- [ ] **Cancelar** (público, por cédula):
+      `PATCH /api/patients/<document_number>/appointments/<id>/cancel/`
+      → el horario vuelve a aparecer en disponibilidad.
 - [ ] **Agenda del doctor**: `GET /api/appointments/agenda/?date=YYYY-MM-DD`
       (con el token del doctor)
-- [ ] **Cancelar**: `PATCH /api/appointments/<id>/cancel/` (paciente,
-      su propia cita) → el horario vuelve a aparecer en disponibilidad.
 - [ ] **Marcar atendida/no asistió**: `PATCH /api/appointments/<id>/status/`
       con `{"status": "ATENDIDA"}` (doctor dueño de la cita o admin).
+- [ ] **Mis pacientes** (doctor/admin, con token): `GET /api/patients/`
+- [ ] **Ficha completa de un paciente** (doctor/admin, con token):
+      `GET /api/patients/<document_number>/` — datos + todos sus turnos
+      + su historial de tratamientos, en una sola llamada. Un DOCTOR
+      solo puede ver pacientes que tuvieron al menos un turno con él;
+      un ADMIN ve cualquiera.
+- [ ] **Historial de tratamientos** (doctor/admin, con token):
+      `GET/POST /api/patients/<document_number>/treatments/`
 - [ ] **Notificaciones**: correr `python manage.py send_pending_notifications`
       envía la confirmación pendiente (en desarrollo se imprime en la
       consola del servidor en vez de mandarse de verdad — ver `.env`).
 
-Ya probé cada uno de estos puntos en mi entorno antes de entregarte el
-proyecto, incluyendo un intento deliberado de doble reserva simultánea
-para confirmar que la base de datos la rechaza.
+Hay pruebas automatizadas de todo el flujo de reserva sin login (una
+por día, doble reserva rechazada, consultar/editar/cancelar por
+cédula) en `apps/appointments/tests.py` — correlas con
+`python manage.py test`.
 
 ## 5. El worker de recordatorios
 
@@ -185,10 +212,11 @@ CLINICA_CITAS/
   config/           -> settings por entorno, urls
   core/             -> permisos compartidos por rol
   apps/
-    users/          -> usuario personalizado, registro, login/JWT
+    users/          -> usuario personalizado (doctores/admins), login/JWT
     doctors/        -> perfil de doctor
     schedules/      -> horario semanal, bloqueos, cálculo de disponibilidad
-    appointments/   -> reserva de citas, agenda, cancelación
+    patients/       -> paciente sin login (por cédula) + historial de tratamientos
+    appointments/   -> reserva sin login, agenda, edición/cancelación, un turno/día
     notifications/  -> registro y envío de confirmaciones/recordatorios
   requirements/
 ```

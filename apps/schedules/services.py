@@ -18,11 +18,15 @@ from datetime import datetime, timedelta
 from django.utils import timezone
 
 
-def get_available_slots(doctor, date):
+def get_available_slots(doctor, date, exclude_appointment_id=None):
     """
     Devuelve una lista de tuplas (inicio, fin) — datetimes con timezone —
     con los horarios disponibles del doctor para la fecha dada, usando
     su duración fija de turno (doctor.appointment_duration_minutes).
+
+    `exclude_appointment_id` permite ignorar una cita puntual al
+    calcular qué está ocupado — se usa al reprogramar: la cita que se
+    está editando no debe "bloquearse a sí misma".
     """
     from apps.appointments.models import Appointment  # import diferido: evita import circular
 
@@ -54,14 +58,15 @@ def get_available_slots(doctor, date):
         )
     )
 
-    busy_appointments = list(
-        Appointment.objects.filter(
-            doctor=doctor,
-            status__in=[Appointment.Status.CONFIRMADA, Appointment.Status.ATENDIDA],
-            start_datetime__lt=day_end,
-            end_datetime__gt=day_start,
-        )
+    busy_qs = Appointment.objects.filter(
+        doctor=doctor,
+        status__in=[Appointment.Status.CONFIRMADA, Appointment.Status.ATENDIDA],
+        start_datetime__lt=day_end,
+        end_datetime__gt=day_start,
     )
+    if exclude_appointment_id:
+        busy_qs = busy_qs.exclude(pk=exclude_appointment_id)
+    busy_appointments = list(busy_qs)
 
     now = timezone.now()
     available = []
@@ -80,7 +85,9 @@ def get_available_slots(doctor, date):
     return available
 
 
-def is_slot_available(doctor, start_datetime, end_datetime):
+def is_slot_available(doctor, start_datetime, end_datetime, exclude_appointment_id=None):
     """Revalidación puntual: ¿este horario exacto sigue disponible?"""
-    slots = get_available_slots(doctor, timezone.localtime(start_datetime).date())
+    slots = get_available_slots(
+        doctor, timezone.localtime(start_datetime).date(), exclude_appointment_id=exclude_appointment_id
+    )
     return any(s == start_datetime and e == end_datetime for s, e in slots)

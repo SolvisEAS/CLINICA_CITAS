@@ -47,17 +47,18 @@ def _build_email(notification):
     if notification.type == Notification.Type.CONFIRMACION:
         subject = f"Confirmación de tu cita — {fecha} {hora}"
         body = (
-            f"Hola {appointment.patient.get_full_name() or appointment.patient.username},\n\n"
+            f"Hola {appointment.patient.name},\n\n"
             f"Tu cita quedó confirmada:\n"
             f"  Doctor: {doctor_name}\n"
             f"  Fecha: {fecha}\n"
             f"  Hora: {hora}\n\n"
-            f"Si necesitás cancelarla, podés hacerlo desde tu cuenta."
+            f"Si necesitás editarla o cancelarla, podés hacerlo indicando tu"
+            f" número de documento ({appointment.patient.document_number})."
         )
     else:
         subject = f"Recordatorio de tu cita — {fecha} {hora}"
         body = (
-            f"Hola {appointment.patient.get_full_name() or appointment.patient.username},\n\n"
+            f"Hola {appointment.patient.name},\n\n"
             f"Te recordamos tu cita:\n"
             f"  Doctor: {doctor_name}\n"
             f"  Fecha: {fecha}\n"

@@ -71,11 +71,11 @@ class DoctorAvailabilityView(APIView):
     GET /api/doctors/{doctor_id}/availability/?date=YYYY-MM-DD
 
     Devuelve los horarios disponibles de ese doctor para esa fecha.
-    Accesible a cualquier usuario autenticado (los pacientes lo
-    necesitan para elegir un horario antes de reservar).
+    Público, sin login: el paciente lo necesita para elegir un horario
+    antes de reservar y no tiene cuenta.
     """
 
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
 
     def get(self, request, doctor_id):
         doctor = Doctor.objects.filter(pk=doctor_id, active=True).first()

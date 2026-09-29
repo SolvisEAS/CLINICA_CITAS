@@ -9,9 +9,14 @@ class User(AbstractUser):
     costoso en Django, así que se resuelve ahora.
 
     role determina qué puede hacer cada usuario:
-      - PACIENTE: se auto-registra, reserva y gestiona sus propias citas.
-      - DOCTOR: gestiona su horario y su agenda. Lo crea un ADMIN y
-        siempre tiene además un perfil en apps.doctors.Doctor.
+      - PACIENTE: rol heredado del diseño original; ya no lo usa el
+        flujo de reserva (decisión de negocio: el paciente no tiene
+        cuenta ni login — ver apps.patients.Patient, identificado por
+        cédula). Se deja por compatibilidad, pero ningún endpoint lo
+        exige hoy.
+      - DOCTOR: gestiona su horario, su agenda, sus pacientes y el
+        historial de tratamientos. Lo crea un ADMIN y siempre tiene
+        además un perfil en apps.doctors.Doctor.
       - ADMIN: gestiona doctores, usuarios y configuración general.
     """
 

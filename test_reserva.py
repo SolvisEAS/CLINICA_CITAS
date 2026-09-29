@@ -2,23 +2,28 @@
 """
 Script de prueba: simula lo que haría un paciente real contra la API
 ya desplegada en el servidor. Solo usa la librería estándar de Python
-(no hace falta instalar nada nuevo en el venv).
+(no hace falta instalar nada nuevo en el venv). El paciente NO necesita
+cuenta ni login — solo su cédula y sus datos básicos.
 
 Uso:
-    python3 test_reserva.py <usuario> <contraseña>
+    python3 test_reserva.py <numero_de_documento>
 
 Ejemplo:
-    python3 test_reserva.py paciente_prueba PruebaSegura123!
+    python3 test_reserva.py 12345678
 
 Qué hace, paso a paso:
-    1. Inicia sesión con el paciente que ya registraste manualmente.
-    2. Lista los doctores disponibles.
-    3. Busca el primer día (de los próximos 14) en que ese doctor
+    1. Lista los doctores disponibles (endpoint público).
+    2. Busca el primer día (de los próximos 14) en que ese doctor
        tenga al menos un horario libre.
-    4. Reserva ese horario.
-    5. Confirma que la cita quedó en "Mis citas".
-    6. Intenta reservar el MISMO horario de nuevo, a propósito, para
-       comprobar que el sistema lo rechaza (no permite doble reserva).
+    3. Reserva ese horario indicando los 4 datos del paciente.
+    4. Confirma que la cita aparece al consultar por cédula.
+    5. Intenta reservar el MISMO horario de nuevo con OTRA cédula, a
+       propósito, para comprobar que el sistema lo rechaza (no permite
+       doble reserva del mismo doctor).
+    6. Intenta reservar OTRO horario ese mismo día con la MISMA
+       cédula, a propósito, para comprobar el límite de un turno por
+       día por paciente.
+    7. Cancela la cita reservada en el paso 3.
 """
 import json
 import sys
@@ -29,11 +34,9 @@ from datetime import date, timedelta
 BASE = "http://95.111.213.227:8001/api"
 
 
-def call(method, path, data=None, token=None):
+def call(method, path, data=None):
     url = f"{BASE}{path}"
     headers = {"Content-Type": "application/json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
     body = json.dumps(data).encode() if data is not None else None
     req = urllib.request.Request(url, data=body, method=method, headers=headers)
     try:
@@ -44,22 +47,15 @@ def call(method, path, data=None, token=None):
 
 
 def main():
-    if len(sys.argv) != 3:
-        print("Uso: python3 test_reserva.py <usuario> <contraseña>")
+    if len(sys.argv) != 2:
+        print("Uso: python3 test_reserva.py <numero_de_documento>")
         sys.exit(1)
 
-    username, password = sys.argv[1], sys.argv[2]
+    document_number = sys.argv[1]
+    otro_documento = document_number + "9"  # cédula distinta, para el intento de doble reserva
 
-    print("== 1. Login ==")
-    status, resp = call("POST", "/auth/login/", {"username": username, "password": password})
-    print(status, resp)
-    if status != 200:
-        print("No se pudo iniciar sesión. Revisá usuario/contraseña.")
-        sys.exit(1)
-    token = resp["access"]
-
-    print("\n== 2. Lista de doctores ==")
-    status, resp = call("GET", "/doctors/", token=token)
+    print("== 1. Lista de doctores (público, sin login) ==")
+    status, resp = call("GET", "/doctors/")
     print(status, resp)
     doctores = resp.get("results", resp) if isinstance(resp, dict) else resp
     if not doctores:
@@ -68,14 +64,17 @@ def main():
     doctor_id = doctores[0]["id"]
     print(f"\nUsando doctor id={doctor_id}")
 
-    print("\n== 3. Buscando el primer día con horarios libres (próximos 14 días) ==")
+    print("\n== 2. Buscando el primer día con horarios libres (próximos 14 días) ==")
     slot = None
+    slot_alternativo = None
     for i in range(1, 15):
         d = date.today() + timedelta(days=i)
-        status, resp = call("GET", f"/doctors/{doctor_id}/availability/?date={d.isoformat()}", token=token)
+        status, resp = call("GET", f"/doctors/{doctor_id}/availability/?date={d.isoformat()}")
         if status == 200 and resp:
             print(f"{d.isoformat()}: {len(resp)} horario(s) libres")
             slot = resp[0]
+            if len(resp) > 1:
+                slot_alternativo = resp[1]
             break
         else:
             print(f"{d.isoformat()}: sin horarios libres")
@@ -86,32 +85,73 @@ def main():
 
     print(f"\nHorario elegido: {slot}")
 
-    print("\n== 4. Reservando el turno ==")
+    print("\n== 3. Reservando el turno (sin login, con los datos del paciente) ==")
     status, resp = call(
         "POST", "/appointments/",
-        {"doctor": doctor_id, "start_datetime": slot["start_datetime"], "notes": "Turno de prueba"},
-        token=token,
+        {
+            "document_number": document_number,
+            "name": "Paciente de Prueba",
+            "phone": "099000000",
+            "email": "paciente.prueba@example.com",
+            "doctor": doctor_id,
+            "start_datetime": slot["start_datetime"],
+            "notes": "Turno de prueba",
+        },
     )
     print(status, resp)
     if status != 201:
         print("La reserva falló.")
         sys.exit(1)
+    appointment_id = resp["id"]
 
-    print("\n== 5. Confirmando en 'Mis citas' ==")
-    status, resp = call("GET", "/appointments/mine/", token=token)
+    print("\n== 4. Consultando mis turnos por cédula ==")
+    status, resp = call("GET", f"/patients/{document_number}/appointments/")
     print(status, resp)
 
-    print("\n== 6. Intentando reservar el MISMO horario de nuevo (debe fallar) ==")
+    print("\n== 5. Intentando reservar el MISMO horario con OTRA cédula (debe fallar) ==")
     status, resp = call(
         "POST", "/appointments/",
-        {"doctor": doctor_id, "start_datetime": slot["start_datetime"], "notes": "Intento de doble reserva"},
-        token=token,
+        {
+            "document_number": otro_documento,
+            "name": "Otro Paciente",
+            "phone": "099111111",
+            "email": "otro.paciente@example.com",
+            "doctor": doctor_id,
+            "start_datetime": slot["start_datetime"],
+            "notes": "Intento de doble reserva",
+        },
     )
     print(status, resp)
     if status == 400:
-        print("\n✅ Correcto: el sistema rechazó la doble reserva, como se esperaba.")
+        print("✅ Correcto: el sistema rechazó la doble reserva del mismo horario.")
     else:
-        print("\n⚠️ Atención: se esperaba un error 400 y no ocurrió.")
+        print("⚠️ Atención: se esperaba un error 400 y no ocurrió.")
+
+    if slot_alternativo:
+        print("\n== 6. Intentando reservar OTRO horario el mismo día con la MISMA cédula (debe fallar) ==")
+        status, resp = call(
+            "POST", "/appointments/",
+            {
+                "document_number": document_number,
+                "name": "Paciente de Prueba",
+                "phone": "099000000",
+                "email": "paciente.prueba@example.com",
+                "doctor": doctor_id,
+                "start_datetime": slot_alternativo["start_datetime"],
+                "notes": "Segundo turno el mismo día",
+            },
+        )
+        print(status, resp)
+        if status == 400:
+            print("✅ Correcto: el sistema rechazó el segundo turno el mismo día.")
+        else:
+            print("⚠️ Atención: se esperaba un error 400 y no ocurrió.")
+    else:
+        print("\n== 6. (Se salteó: el doctor solo tenía un horario libre ese día) ==")
+
+    print("\n== 7. Cancelando el turno reservado en el paso 3 ==")
+    status, resp = call("PATCH", f"/patients/{document_number}/appointments/{appointment_id}/cancel/", {})
+    print(status, resp)
 
 
 if __name__ == "__main__":
