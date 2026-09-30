@@ -17,7 +17,32 @@ from .serializers import (
 from .services import get_available_slots
 
 
-class WeeklyScheduleViewSet(viewsets.ModelViewSet):
+class DoctorOwnedMixin:
+    """
+    Un DOCTOR siempre opera sobre su propio perfil (se ignora cualquier
+    `doctor` que mande); un ADMIN tiene que indicar `doctor` al crear.
+    """
+
+    def _save_with_doctor(self, serializer, creating):
+        user = self.request.user
+        if user.role == "DOCTOR":
+            doctor = Doctor.objects.filter(user=user).first()
+            if not doctor:
+                raise ValidationError({"doctor": "Tu usuario no tiene un perfil de doctor asociado."})
+            serializer.save(doctor=doctor)
+        else:
+            if creating and not serializer.validated_data.get("doctor"):
+                raise ValidationError({"doctor": "Indicá el doctor."})
+            serializer.save()
+
+    def perform_create(self, serializer):
+        self._save_with_doctor(serializer, creating=True)
+
+    def perform_update(self, serializer):
+        self._save_with_doctor(serializer, creating=False)
+
+
+class WeeklyScheduleViewSet(DoctorOwnedMixin, viewsets.ModelViewSet):
     """
     Gestión del horario semanal habitual de un doctor.
     ADMIN puede gestionar cualquiera; un DOCTOR solo el suyo propio.
@@ -34,16 +59,8 @@ class WeeklyScheduleViewSet(viewsets.ModelViewSet):
             qs = qs.filter(doctor__user=user)
         return qs
 
-    def perform_create(self, serializer):
-        user = self.request.user
-        if user.role == "DOCTOR":
-            doctor = Doctor.objects.get(user=user)
-            serializer.save(doctor=doctor)
-        else:
-            serializer.save()
 
-
-class AvailabilityExceptionViewSet(viewsets.ModelViewSet):
+class AvailabilityExceptionViewSet(DoctorOwnedMixin, viewsets.ModelViewSet):
     """Bloqueos/ausencias puntuales de un doctor (mismo esquema de permisos)."""
 
     serializer_class = AvailabilityExceptionSerializer
@@ -56,14 +73,6 @@ class AvailabilityExceptionViewSet(viewsets.ModelViewSet):
         if user.role == "DOCTOR":
             qs = qs.filter(doctor__user=user)
         return qs
-
-    def perform_create(self, serializer):
-        user = self.request.user
-        if user.role == "DOCTOR":
-            doctor = Doctor.objects.get(user=user)
-            serializer.save(doctor=doctor)
-        else:
-            serializer.save()
 
 
 class DoctorAvailabilityView(APIView):

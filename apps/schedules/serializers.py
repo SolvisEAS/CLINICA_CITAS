@@ -1,10 +1,15 @@
 from rest_framework import serializers
 
+from apps.doctors.models import Doctor
+
 from .models import AvailabilityException, WeeklySchedule
 
 
 class WeeklyScheduleSerializer(serializers.ModelSerializer):
     weekday_display = serializers.CharField(source="get_weekday_display", read_only=True)
+    # Opcional en la validación: a un DOCTOR se le asigna el suyo en la
+    # vista; a un ADMIN la vista le exige mandarlo.
+    doctor = serializers.PrimaryKeyRelatedField(queryset=Doctor.objects.all(), required=False)
 
     class Meta:
         model = WeeklySchedule
@@ -19,6 +24,8 @@ class WeeklyScheduleSerializer(serializers.ModelSerializer):
 
 
 class AvailabilityExceptionSerializer(serializers.ModelSerializer):
+    doctor = serializers.PrimaryKeyRelatedField(queryset=Doctor.objects.all(), required=False)
+
     class Meta:
         model = AvailabilityException
         fields = ["id", "doctor", "start_datetime", "end_datetime", "type", "reason"]
