@@ -1,11 +1,33 @@
 from rest_framework import generics, permissions
 from rest_framework.exceptions import NotFound, PermissionDenied
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from apps.doctors.models import Doctor
 
 from .models import Patient, TreatmentRecord
 from .serializers import PatientDetailSerializer, PatientSerializer, TreatmentRecordSerializer
 from .utils import normalize_document_number
+
+
+class PatientExistsView(APIView):
+    """
+    GET /api/patients/<document_number>/exists/ — público, sin login.
+    Chequeo mínimo para el flujo de reserva: le permite al frontend
+    reconocer a un paciente ya cargado (por Django admin o por una
+    reserva anterior) y precompletar su nombre, sin exponer teléfono
+    ni correo. A diferencia de GET .../appointments/, no exige que el
+    paciente tenga turnos previos.
+    """
+
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, document_number):
+        document_number = normalize_document_number(document_number)
+        patient = Patient.objects.filter(pk=document_number).first()
+        if not patient:
+            return Response({"exists": False})
+        return Response({"exists": True, "name": patient.name})
 
 
 def _get_patient_or_404(document_number):
