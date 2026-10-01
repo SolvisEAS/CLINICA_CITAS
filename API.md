@@ -194,6 +194,21 @@ lista simple:
 no existe o está inactivo. Array vacío `[]` si no hay horarios libres
 ese día (no es error).
 
+### `GET /api/doctors/{doctor_id}/available-days/?start=YYYY-MM-DD&end=YYYY-MM-DD`
+
+Días del rango (ambos incluidos, máximo 62 días) con al menos un
+horario libre — para marcar en el calendario qué días se pueden
+elegir. Usa la misma lógica que el endpoint anterior. No pagina:
+
+```json
+[
+  { "date": "2026-10-05", "available_slots": 6 },
+  { "date": "2026-10-07", "available_slots": 14 }
+]
+```
+Los días sin disponibilidad simplemente no aparecen. `400` si faltan
+`start`/`end`, el formato es inválido o el rango es demasiado grande.
+
 ---
 
 ## 5. Horarios semanales y bloqueos (doctor/admin)
@@ -242,10 +257,17 @@ Body:
 ```
 - `document_number`: se normaliza solo (saca puntos, guiones, espacios)
   antes de guardar — podés mandarlo con o sin formato.
-- `notes` es opcional (`""` por defecto).
-- El backend crea o actualiza al paciente por su `document_number`
-  (si ya existía, actualiza nombre/teléfono/correo con lo último
-  mandado).
+- **Paciente existente** (la cédula ya está registrada): alcanza con
+  `document_number`, `doctor` y `start_datetime`. `name`/`phone`/`email`
+  se ignoran — los datos guardados **no** se sobrescriben.
+- **Paciente nuevo**: `name` y `phone` son obligatorios; `email` es
+  opcional.
+- `notes` es opcional (`""` por defecto) y se usa como **motivo de la
+  consulta** (lo ve el doctor en su agenda).
+
+Para saber de antemano si la cédula existe:
+`GET /api/patients/{document_number}/exists/` → `{"exists": true, "name": "Juan Pérez"}`
+o `{"exists": false}` (público; no expone teléfono ni correo).
 
 Respuesta `201`, un objeto **Appointment**:
 ```json
@@ -358,11 +380,16 @@ menos un turno con él (`403` si no). Un **ADMIN** ve cualquiera.
 `GET`: lista de tratamientos de ese paciente (de cualquier doctor —
 historial clínico compartido dentro de la clínica).
 ```json
-{ "id": 4, "patient": "12345678", "doctor": 1, "doctor_name": "Ana López", "appointment": 10, "description": "Limpieza dental de rutina", "created_at": "2026-09-27T18:00:00-03:00" }
+{ "id": 4, "patient": "12345678", "doctor": 1, "doctor_name": "Ana López", "appointment": 10, "reason": "Control general", "description": "Evolución favorable.", "treatment": "Continuar tratamiento actual.", "created_at": "2026-09-27T18:00:00-03:00" }
 ```
-`POST` body: `{ "description": "...", "appointment": 10 }` (`appointment`
-opcional). Un **DOCTOR** queda asignado automáticamente como autor; un
-**ADMIN** debe mandar además `"doctor": <id>` en el body.
+- `reason`: motivo / tipo de consulta (opcional).
+- `description`: **observaciones** (obligatorio).
+- `treatment`: tratamiento / indicaciones (opcional).
+
+`POST` body: `{ "reason": "...", "description": "...", "treatment": "...", "appointment": 10 }`
+(todo opcional salvo `description`). Un **DOCTOR** queda asignado
+automáticamente como autor; un **ADMIN** debe mandar además
+`"doctor": <id>` en el body.
 
 ---
 

@@ -111,6 +111,35 @@ class BookingWithoutLoginTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
         self.assertEqual(response.data["start_datetime"], new_start)
 
+    def test_existing_patient_books_with_only_document_number(self):
+        Patient.objects.create(document_number="12345678", name="Juan Pérez", phone="099123456", email="")
+        response = self.client.post(
+            "/api/appointments/",
+            {"document_number": "12345678", "doctor": self.doctor.id, "start_datetime": self._slot().isoformat()},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        self.assertEqual(response.data["patient_name"], "Juan Pérez")
+
+    def test_existing_patient_data_is_not_overwritten(self):
+        Patient.objects.create(document_number="12345678", name="Juan Pérez", phone="099123456", email="")
+        response = self._book(name="Otro Nombre", phone="000", email="otro@example.com")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        patient = Patient.objects.get(pk="12345678")
+        self.assertEqual((patient.name, patient.phone, patient.email), ("Juan Pérez", "099123456", ""))
+
+    def test_new_patient_requires_name_and_phone(self):
+        response = self._book(name="", phone="")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("name", response.data)
+        self.assertIn("phone", response.data)
+        self.assertFalse(Patient.objects.exists())
+
+    def test_new_patient_email_is_optional(self):
+        payload_without_email = self._book(email="")
+        self.assertEqual(payload_without_email.status_code, status.HTTP_201_CREATED, payload_without_email.data)
+        self.assertEqual(Patient.objects.get().email, "")
+
     def test_other_patient_cannot_see_or_cancel_appointment(self):
         created = self._book().data
         # Otra cédula que nunca reservó nada.
