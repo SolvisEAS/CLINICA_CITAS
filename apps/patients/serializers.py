@@ -15,7 +15,10 @@ class TreatmentRecordSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = TreatmentRecord
-        fields = ["id", "patient", "doctor", "doctor_name", "appointment", "description", "created_at"]
+        fields = [
+            "id", "patient", "doctor", "doctor_name", "appointment",
+            "reason", "description", "treatment", "created_at",
+        ]
         read_only_fields = ["id", "patient", "doctor", "created_at"]
 
     def get_doctor_name(self, obj):

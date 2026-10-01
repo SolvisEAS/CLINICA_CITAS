@@ -26,7 +26,7 @@ class Patient(models.Model):
     )
     name = models.CharField("Nombre y apellido", max_length=200)
     phone = models.CharField("Teléfono", max_length=30)
-    email = models.EmailField("Correo electrónico")
+    email = models.EmailField("Correo electrónico", blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -57,7 +57,11 @@ class TreatmentRecord(models.Model):
         blank=True,
         related_name="treatment_record",
     )
-    description = models.TextField("Descripción del tratamiento")
+    reason = models.CharField("Motivo / tipo de consulta", max_length=200, blank=True)
+    # Se muestra como "Observaciones"; se mantiene el nombre del campo
+    # para no migrar los registros existentes.
+    description = models.TextField("Observaciones")
+    treatment = models.TextField("Tratamiento / indicaciones", blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

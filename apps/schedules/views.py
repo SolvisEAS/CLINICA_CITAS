@@ -1,4 +1,5 @@
 from datetime import date as date_cls
+from datetime import timedelta
 
 from rest_framework import permissions, viewsets
 from rest_framework.exceptions import ValidationError
@@ -103,3 +104,42 @@ class DoctorAvailabilityView(APIView):
         data = [{"start_datetime": s, "end_datetime": e} for s, e in slots]
         serializer = AvailableSlotSerializer(data, many=True)
         return Response(serializer.data)
+
+
+class DoctorAvailableDaysView(APIView):
+    """
+    GET /api/doctors/{doctor_id}/available-days/?start=YYYY-MM-DD&end=YYYY-MM-DD
+
+    Público, sin login. Días del rango (ambos extremos incluidos) en los
+    que el doctor tiene al menos un horario libre, para que el
+    calendario del paciente marque qué días se pueden elegir sin pedir
+    la disponibilidad día por día. Usa la misma lógica que el endpoint
+    de horarios, así que nunca marca un día que después aparezca vacío.
+    """
+
+    permission_classes = [permissions.AllowAny]
+    MAX_RANGE_DAYS = 62
+
+    def get(self, request, doctor_id):
+        doctor = Doctor.objects.filter(pk=doctor_id, active=True).first()
+        if not doctor:
+            return Response({"detail": "Doctor no encontrado o inactivo."}, status=404)
+
+        try:
+            start = date_cls.fromisoformat(request.query_params.get("start", ""))
+            end = date_cls.fromisoformat(request.query_params.get("end", ""))
+        except ValueError:
+            raise ValidationError({"detail": "Indicá 'start' y 'end' con formato YYYY-MM-DD."})
+        if end < start:
+            raise ValidationError({"end": "Debe ser igual o posterior a 'start'."})
+        if (end - start).days >= self.MAX_RANGE_DAYS:
+            raise ValidationError({"end": f"El rango no puede superar {self.MAX_RANGE_DAYS} días."})
+
+        days = []
+        current = start
+        while current <= end:
+            count = len(get_available_slots(doctor, current))
+            if count:
+                days.append({"date": current.isoformat(), "available_slots": count})
+            current += timedelta(days=1)
+        return Response(days)

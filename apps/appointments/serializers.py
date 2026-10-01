@@ -35,17 +35,19 @@ class AppointmentSerializer(serializers.ModelSerializer):
 
 class AppointmentCreateSerializer(serializers.Serializer):
     """
-    Reserva pública, sin login: el paciente manda sus cuatro datos
-    básicos (cédula, nombre, teléfono, correo) junto con el doctor y
-    el horario elegido. El backend crea (o actualiza) al paciente por
-    esos datos y vuelve a validar la disponibilidad y el límite de una
-    cita por día — no confía en lo que haya mostrado el frontend.
+    Reserva pública, sin login. Si la cédula ya corresponde a un
+    paciente, alcanza con la cédula: se usan sus datos guardados y no se
+    sobrescriben (si no, cualquiera que conozca una cédula podría
+    cambiarle el nombre o el teléfono a ese paciente). Si la cédula es
+    nueva, se exigen nombre y teléfono; el correo es opcional. El
+    backend vuelve a validar la disponibilidad y el límite de una cita
+    por día — no confía en lo que haya mostrado el frontend.
     """
 
     document_number = serializers.CharField(max_length=20)
-    name = serializers.CharField(max_length=200)
-    phone = serializers.CharField(max_length=30)
-    email = serializers.EmailField()
+    name = serializers.CharField(max_length=200, required=False, allow_blank=True)
+    phone = serializers.CharField(max_length=30, required=False, allow_blank=True)
+    email = serializers.EmailField(required=False, allow_blank=True)
     doctor = serializers.PrimaryKeyRelatedField(queryset=Doctor.objects.filter(active=True))
     start_datetime = serializers.DateTimeField()
     notes = serializers.CharField(required=False, allow_blank=True, default="")
@@ -61,6 +63,16 @@ class AppointmentCreateSerializer(serializers.Serializer):
         return digits
 
     def validate(self, attrs):
+        existing_patient = Patient.objects.filter(pk=attrs["document_number"]).first()
+        if not existing_patient:
+            missing = {
+                field: "Este campo es obligatorio para un paciente nuevo."
+                for field in ("name", "phone")
+                if not attrs.get(field, "").strip()
+            }
+            if missing:
+                raise serializers.ValidationError(missing)
+
         doctor = attrs["doctor"]
         start = attrs["start_datetime"]
         if start <= timezone.now():
@@ -76,7 +88,6 @@ class AppointmentCreateSerializer(serializers.Serializer):
         # al día": chequeo rápido acá (buena UX); el chequeo definitivo,
         # con lock de fila, se repite en create() para cubrir el caso de
         # dos reservas casi simultáneas con la misma cédula.
-        existing_patient = Patient.objects.filter(pk=attrs["document_number"]).first()
         if existing_patient and patient_has_conflicting_appointment(existing_patient, start):
             raise serializers.ValidationError(
                 {"non_field_errors": ["Ya tenés una cita agendada ese día. Solo se permite una cita por día."]}
@@ -87,12 +98,14 @@ class AppointmentCreateSerializer(serializers.Serializer):
         from apps.notifications.services import schedule_appointment_notifications
 
         with transaction.atomic():
-            patient, _ = Patient.objects.update_or_create(
+            # get_or_create: a un paciente existente no se le tocan los
+            # datos guardados, aunque la request traiga otros.
+            patient, _ = Patient.objects.get_or_create(
                 document_number=validated_data["document_number"],
                 defaults={
-                    "name": validated_data["name"],
-                    "phone": validated_data["phone"],
-                    "email": validated_data["email"],
+                    "name": validated_data.get("name", "").strip(),
+                    "phone": validated_data.get("phone", "").strip(),
+                    "email": validated_data.get("email", ""),
                 },
             )
             # Bloquea la fila del paciente durante la transacción: si el
