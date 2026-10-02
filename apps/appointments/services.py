@@ -12,6 +12,15 @@ from django.utils import timezone
 from .models import Appointment
 
 
+def can_patient_modify(appointment):
+    """
+    El paciente puede modificar (o cancelar) una cita solo mientras está
+    pendiente y todavía no llegó su hora: desde el momento de la consulta
+    en adelante ya no.
+    """
+    return appointment.status == Appointment.Status.CONFIRMADA and appointment.start_datetime > timezone.now()
+
+
 def patient_has_conflicting_appointment(patient, start_datetime, exclude_pk=None):
     """
     True si `patient` ya tiene una cita activa (CONFIRMADA o ATENDIDA)

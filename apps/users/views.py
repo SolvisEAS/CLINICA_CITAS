@@ -1,15 +1,17 @@
 from django.contrib.auth import get_user_model
+from django.db.models import Q
 from rest_framework import generics, permissions, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from core.permissions import IsAdminRole
+from core.permissions import IsAdministrator
 
 from .serializers import (
-    AdminCreateUserSerializer,
-    AdminUserListSerializer,
+    AdminUserSerializer,
+    AdminUserWriteSerializer,
     MeSerializer,
     RegisterSerializer,
     SetPasswordSerializer,
@@ -57,25 +59,32 @@ class LogoutView(APIView):
 
 class AdminUserViewSet(viewsets.ModelViewSet):
     """
-    GET/POST /api/users/ y PATCH /api/users/{id}/set-password/ — solo
-    ADMIN. Es la vía para dar de alta doctores/administradores y
-    resetearles la contraseña desde el frontend desacoplado, sin pasar
-    por /admin/ de Django.
+    Panel de administración de usuarios Doctor/Administrador (solo
+    administradores):
+      GET   /api/users/[?role=DOCTOR|ADMIN]   listar
+      POST  /api/users/                       crear
+      GET   /api/users/{id}/                  ver
+      PATCH /api/users/{id}/                  editar / activar / desactivar
+      PATCH /api/users/{id}/set-password/     restablecer contraseña
+    No hay DELETE: a un usuario se lo desactiva, no se lo borra.
     """
 
-    queryset = User.objects.all().order_by("first_name", "last_name")
-    permission_classes = [permissions.IsAuthenticated, IsAdminRole]
+    permission_classes = [permissions.IsAuthenticated, IsAdministrator]
     http_method_names = ["get", "post", "patch", "head", "options"]
 
     def get_serializer_class(self):
-        if self.action == "create":
-            return AdminCreateUserSerializer
+        if self.action in ("create", "partial_update"):
+            return AdminUserWriteSerializer
         if self.action == "set_password":
             return SetPasswordSerializer
-        return AdminUserListSerializer
+        return AdminUserSerializer
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        qs = (
+            User.objects.filter(Q(role__in=[User.Role.DOCTOR, User.Role.ADMIN]) | Q(is_superuser=True))
+            .select_related("doctor_profile")
+            .order_by("first_name", "last_name", "username")
+        )
         role = self.request.query_params.get("role")
         if role:
             qs = qs.filter(role=role)
@@ -84,6 +93,8 @@ class AdminUserViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["patch"], url_path="set-password")
     def set_password(self, request, pk=None):
         user = self.get_object()
+        if user.is_superuser and not request.user.is_superuser:
+            raise PermissionDenied("Solo un superusuario puede cambiar la contraseña de otro superusuario.")
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user.set_password(serializer.validated_data["new_password"])

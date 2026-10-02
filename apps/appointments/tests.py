@@ -10,12 +10,19 @@ Cubre también las dos reglas críticas de agendamiento:
 """
 from datetime import date, datetime, timedelta
 
+from unittest.mock import patch
+
+from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime as parse_dt
 from rest_framework import status
 from rest_framework.test import APITestCase
+from rest_framework.throttling import ScopedRateThrottle
 
 from apps.doctors.models import Doctor
+from apps.notifications.models import Notification
 from apps.patients.models import Patient
 from apps.schedules.models import WeeklySchedule
 
@@ -33,6 +40,7 @@ def next_weekday(weekday):
 
 class BookingWithoutLoginTests(APITestCase):
     def setUp(self):
+        cache.clear()  # el límite de intentos por IP no debe arrastrarse entre tests
         user = User.objects.create_user(username="dra_lopez", password="x", role=User.Role.DOCTOR)
         self.doctor = Doctor.objects.create(user=user, appointment_duration_minutes=30, active=True)
         self.target_date = next_weekday(0)  # un lunes futuro
@@ -147,3 +155,129 @@ class BookingWithoutLoginTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         cancel = self.client.patch(f"/api/patients/99999999/appointments/{created['id']}/cancel/")
         self.assertEqual(cancel.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class MyAppointmentsAndModifyTests(APITestCase):
+    """Portal público: "Ver mis consultas" y "Modificar consulta" con la CI."""
+
+    def setUp(self):
+        cache.clear()
+        self.doctor = self._make_doctor("dra_lopez", "Odontología general")
+        self.other_doctor = self._make_doctor("dr_gomez", "Ortodoncia")
+        self.monday = next_weekday(0)
+        self.patient = Patient.objects.create(
+            document_number="12345678", name="Juan Pérez", phone="099123456", email="juan@example.com"
+        )
+
+    def _make_doctor(self, username, specialty):
+        user = User.objects.create_user(username=username, password="x", role=User.Role.DOCTOR)
+        doctor = Doctor.objects.create(user=user, specialty=specialty, appointment_duration_minutes=30, active=True)
+        WeeklySchedule.objects.create(doctor=doctor, weekday=0, start_time="09:00", end_time="12:00")
+        return doctor
+
+    def _at(self, day, hour, minute=0):
+        return timezone.make_aware(datetime.combine(day, datetime.min.time()).replace(hour=hour, minute=minute))
+
+    def _create(self, start, status=Appointment.Status.CONFIRMADA, patient=None):
+        return Appointment.objects.create(
+            patient=patient or self.patient, doctor=self.doctor, status=status,
+            start_datetime=start, end_datetime=start + timedelta(minutes=30),
+        )
+
+    def _book(self, start):
+        return self.client.post(
+            "/api/appointments/",
+            {"document_number": "12345678", "doctor": self.doctor.id, "start_datetime": start.isoformat()},
+            format="json",
+        )
+
+    def _modify(self, appointment_id, **data):
+        return self.client.patch(f"/api/patients/12345678/appointments/{appointment_id}/", data, format="json")
+
+    def test_my_appointments_lists_only_future_pending_with_minimal_data(self):
+        upcoming = self._create(self._at(self.monday, 9))
+        self._create(self._at(self.monday + timedelta(days=7), 9), status=Appointment.Status.CANCELADA)
+        self._create(self._at(self.monday + timedelta(days=14), 9), status=Appointment.Status.ATENDIDA)
+        self._create(timezone.now() - timedelta(days=2))
+
+        response = self.client.get("/api/patients/12345678/appointments/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual([a["id"] for a in response.data["results"]], [upcoming.id])
+        item = response.data["results"][0]
+        self.assertEqual(item["doctor_specialty"], "Odontología general")
+        self.assertTrue(item["can_modify"])
+        for private_field in ("patient", "patient_name", "notes"):
+            self.assertNotIn(private_field, item)
+
+    def test_modify_can_change_doctor_and_frees_the_old_slot(self):
+        created = self._book(self._at(self.monday, 9)).data
+        new_start = self._at(self.monday, 10)
+        response = self._modify(created["id"], doctor=self.other_doctor.id, start_datetime=new_start.isoformat())
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        appointment = Appointment.objects.get(pk=created["id"])
+        self.assertEqual(appointment.doctor, self.other_doctor)
+        self.assertEqual(appointment.end_datetime, new_start + timedelta(minutes=30))
+
+        freed = self.client.get(f"/api/doctors/{self.doctor.id}/availability/", {"date": self.monday.isoformat()})
+        self.assertIn(self._at(self.monday, 9), [parse_dt(s["start_datetime"]) for s in freed.data])
+
+    def test_modify_is_rejected_once_the_appointment_time_arrived(self):
+        started = self._create(timezone.now() - timedelta(minutes=5))
+        response = self._modify(started.id, start_datetime=self._at(self.monday, 10).isoformat())
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("ya no se puede modificar", response.data["detail"])
+        cancel = self.client.patch(f"/api/patients/12345678/appointments/{started.id}/cancel/")
+        self.assertEqual(cancel.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_changing_doctor_requires_a_new_time(self):
+        created = self._book(self._at(self.monday, 9)).data
+        response = self._modify(created["id"], doctor=self.other_doctor.id)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("start_datetime", response.data)
+
+    def test_modify_into_a_taken_slot_is_rejected(self):
+        other_patient = Patient.objects.create(document_number="87654321", name="Otra", phone="099000000")
+        self._create(self._at(self.monday, 10), patient=other_patient)
+        created = self._book(self._at(self.monday, 9)).data
+        response = self._modify(created["id"], start_datetime=self._at(self.monday, 10).isoformat())
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(Appointment.objects.get(pk=created["id"]).start_datetime, self._at(self.monday, 9))
+
+    def test_modify_replaces_the_pending_reminder(self):
+        created = self._book(self._at(self.monday, 9)).data
+        new_start = self._at(self.monday, 11)
+        self._modify(created["id"], start_datetime=new_start.isoformat())
+        reminders = Notification.objects.filter(
+            appointment_id=created["id"], type=Notification.Type.RECORDATORIO, status=Notification.Status.PENDIENTE
+        )
+        self.assertEqual(reminders.count(), 1)
+        self.assertEqual(reminders.get().scheduled_at, new_start - timedelta(hours=settings.REMINDER_HOURS_BEFORE))
+
+    def test_no_notifications_are_queued_for_a_patient_without_email(self):
+        response = self.client.post(
+            "/api/appointments/",
+            {
+                "document_number": "55555555", "name": "Sin Correo", "phone": "099111222",
+                "doctor": self.doctor.id, "start_datetime": self._at(self.monday, 9).isoformat(),
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        self.assertFalse(Notification.objects.filter(appointment_id=response.data["id"]).exists())
+
+    def test_public_ci_endpoints_are_rate_limited(self):
+        with patch.dict(ScopedRateThrottle.THROTTLE_RATES, {"public_ci": "3/minute"}):
+            codes = [self.client.get("/api/patients/12345678/exists/").status_code for _ in range(4)]
+        self.assertEqual(codes, [200, 200, 200, 429])
+
+    def test_doctor_sees_own_upcoming_appointments(self):
+        first = self._create(self._at(self.monday, 9))
+        second = self._create(self._at(self.monday + timedelta(days=7), 9))
+        self._create(self._at(self.monday + timedelta(days=14), 9), status=Appointment.Status.CANCELADA)
+        self.client.force_authenticate(self.doctor.user)
+        response = self.client.get("/api/appointments/upcoming/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual([a["id"] for a in response.data["results"]], [first.id, second.id])
+
+        self.client.force_authenticate(self.other_doctor.user)
+        self.assertEqual(self.client.get("/api/appointments/upcoming/").data["count"], 0)

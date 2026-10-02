@@ -11,7 +11,7 @@ from apps.patients.utils import normalize_document_number
 from apps.schedules.services import is_slot_available
 
 from .models import Appointment
-from .services import patient_has_conflicting_appointment
+from .services import can_patient_modify, patient_has_conflicting_appointment
 
 
 class AppointmentSerializer(serializers.ModelSerializer):
@@ -31,6 +31,32 @@ class AppointmentSerializer(serializers.ModelSerializer):
 
     def get_doctor_name(self, obj):
         return str(obj.doctor)
+
+
+class PublicAppointmentSerializer(serializers.ModelSerializer):
+    """
+    Lo que ve el paciente en el portal público, donde se identifica solo
+    con su CI: lo mínimo para gestionar la consulta. A propósito no
+    incluye su nombre ni el motivo, para que conocer una CI ajena no
+    alcance para leer datos personales o de salud.
+    """
+
+    doctor_name = serializers.SerializerMethodField()
+    doctor_specialty = serializers.CharField(source="doctor.specialty", read_only=True)
+    can_modify = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Appointment
+        fields = [
+            "id", "doctor", "doctor_name", "doctor_specialty",
+            "start_datetime", "end_datetime", "status", "can_modify",
+        ]
+
+    def get_doctor_name(self, obj):
+        return str(obj.doctor)
+
+    def get_can_modify(self, obj):
+        return can_patient_modify(obj)
 
 
 class AppointmentCreateSerializer(serializers.Serializer):

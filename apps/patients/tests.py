@@ -7,6 +7,7 @@ from datetime import timedelta
 
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -64,14 +65,66 @@ class DoctorViewsOwnPatientsTests(APITestCase):
         response = self.client.get("/api/patients/12345678/")
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
-    def test_admin_sees_all_patients_and_any_detail(self):
+    def test_administrator_group_has_no_access_to_clinical_data(self):
+        # El grupo Administradores gestiona usuarios; no ve pacientes ni
+        # historiales salvo que se le dé el permiso desde /admin/.
         admin = User.objects.create_user(username="admin1", password="x", role=User.Role.ADMIN)
         self.client.force_authenticate(admin)
+        self.assertEqual(self.client.get("/api/patients/").status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(self.client.get("/api/patients/87654321/").status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_superuser_sees_all_patients_and_any_detail(self):
+        superuser = User.objects.create_superuser(username="root", password="x", email="root@example.com")
+        self.client.force_authenticate(superuser)
         response = self.client.get("/api/patients/")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["count"], 2)
         detail = self.client.get("/api/patients/87654321/")
         self.assertEqual(detail.status_code, status.HTTP_200_OK)
+
+    def test_patient_list_search_and_last_visit_with_any_doctor(self):
+        # La última consulta cuenta las de cualquier doctor, aunque la lista sea la de este doctor.
+        past = timezone.now() - timedelta(days=10)
+        Appointment.objects.create(
+            patient=self.patient, doctor=self.other_doctor, start_datetime=past,
+            end_datetime=past + timedelta(minutes=30), status=Appointment.Status.ATENDIDA,
+        )
+        self.client.force_authenticate(self.doctor_user)
+        response = self.client.get("/api/patients/", {"search": "juan"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 1)
+        self.assertIsNotNone(response.data["results"][0]["last_visit"])
+        self.assertEqual(self.client.get("/api/patients/", {"search": "zzz"}).data["count"], 0)
+
+    def test_doctor_cannot_read_treatments_of_unrelated_patient(self):
+        self.client.force_authenticate(self.doctor_user)
+        response = self.client.get("/api/patients/87654321/treatments/")
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_treatment_cannot_be_linked_to_another_patients_appointment(self):
+        start = timezone.now() + timedelta(days=2)
+        foreign = Appointment.objects.create(
+            patient=self.unrelated_patient, doctor=self.doctor,
+            start_datetime=start, end_datetime=start + timedelta(minutes=30),
+        )
+        self.client.force_authenticate(self.doctor_user)
+        response = self.client.post(
+            "/api/patients/12345678/treatments/",
+            {"description": "Control", "appointment": foreign.id},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_treatment_date_is_the_linked_appointment_date(self):
+        appointment = self.patient.appointments.get()
+        self.client.force_authenticate(self.doctor_user)
+        response = self.client.post(
+            "/api/patients/12345678/treatments/",
+            {"reason": "Control", "description": "Sin novedades", "appointment": appointment.id},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        self.assertEqual(parse_datetime(response.data["date"]), appointment.start_datetime)
 
     def test_patient_cannot_be_seen_without_a_token(self):
         response = self.client.get("/api/patients/12345678/")

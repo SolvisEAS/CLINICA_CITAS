@@ -35,6 +35,28 @@ las rutas de acá viven bajo el prefijo `/api/`.
   contraseña) y usan **JWT** (`Authorization: Bearer <token>`) en
   todo lo que gestionan (su agenda, sus pacientes, horarios, etc.).
 
+### Roles y permisos
+
+Lo que puede hacer cada usuario lo deciden los **Permisos y Grupos de
+Django**. `role` dice qué tipo de usuario es y asigna solo el grupo:
+
+| Grupo | Puede | No puede |
+|---|---|---|
+| **Administradores** (`role=ADMIN`) | gestionar usuarios médicos, doctores y horarios | ver pacientes ni historiales clínicos |
+| **Doctores** (`role=DOCTOR`) | ver su agenda y sus pacientes, el historial, cargar tratamientos, gestionar su horario | administrar usuarios |
+
+El **superusuario** de Django puede todo. Los permisos de cada grupo se
+pueden ajustar desde `/admin/` (Grupos) sin tocar código. Un usuario
+**inactivo** (`is_active=false`) no puede iniciar sesión y sus tokens
+dejan de funcionar; sus turnos e historial se conservan.
+
+### Límite de intentos (endpoints públicos con CI)
+
+Los endpoints públicos que reciben una CI (reservar, `exists`, mis
+consultas, modificar, cancelar) aceptan como máximo
+`PUBLIC_CI_RATE_LIMIT` requests por IP (default `30/minute`); al
+superarlo responden `429`. Evita recorrer cédulas en masa.
+
 ### Formato de fechas
 
 - `date` (solo fecha): `"YYYY-MM-DD"`, ej. `"2026-10-05"`.
@@ -118,27 +140,72 @@ Con `Authorization: Bearer <access>`. Devuelve:
   "phone": "099123456",
   "role": "DOCTOR",
   "is_active": true,
-  "date_joined": "2026-09-20T10:00:00-03:00"
+  "date_joined": "2026-09-20T10:00:00-03:00",
+  "is_admin": false,
+  "doctor_id": 1
 }
 ```
-`role` es uno de `"DOCTOR"` o `"ADMIN"` (el valor `"PACIENTE"` es un
-resabio del diseño anterior; ya no se usa en el flujo de reserva).
+- `is_admin`: si administra usuarios (grupo Administradores o superusuario).
+- `doctor_id`: su perfil de doctor, o `null` si no tiene (un administrador).
+
+Con esos dos campos el frontend decide qué panel mostrar (no con `role`:
+un superusuario puede tener cualquier `role`).
 
 `PATCH /api/users/me/` para editar `first_name`, `last_name`, `phone`,
-`email` (no `role`, `is_active` ni `date_joined`, son de solo lectura).
+`email` (el resto es de solo lectura).
+
+### Usuarios médicos (solo administradores)
+
+| Método y ruta | Qué hace |
+|---|---|
+| `GET /api/users/` 📄 (`?role=DOCTOR\|ADMIN`) | lista doctores, administradores y superusuarios |
+| `POST /api/users/` | crea un usuario |
+| `GET /api/users/{id}/` | un usuario |
+| `PATCH /api/users/{id}/` | edita datos, rol, especialidad, activa/desactiva |
+| `PATCH /api/users/{id}/set-password/` | restablece la contraseña |
+
+No hay `DELETE`: a un usuario se lo **desactiva** (`is_active: false`).
+
+`POST` body:
+```json
+{
+  "first_name": "Carlos", "last_name": "Gómez", "username": "dr_gomez",
+  "password": "...", "password_confirm": "...",
+  "role": "DOCTOR", "specialty": "Pediatría", "appointment_duration_minutes": 30,
+  "is_active": true, "email": "", "phone": ""
+}
+```
+Crea la cuenta (contraseña con el hash de Django), el perfil de Doctor y
+lo pone en su grupo. `PATCH` acepta los mismos campos menos la
+contraseña. Desactivar a un doctor también lo saca de la lista de
+doctores para reservar. Respuesta de todas las rutas:
+```json
+{
+  "id": 7, "username": "dr_gomez", "email": "", "first_name": "Carlos", "last_name": "Gómez",
+  "phone": "", "role": "DOCTOR", "is_active": true, "is_superuser": false, "is_admin": false,
+  "date_joined": "...", "last_login": null,
+  "doctor": { "id": 3, "specialty": "Pediatría", "appointment_duration_minutes": 30, "active": true }
+}
+```
+`set-password` body: `{ "new_password": "...", "new_password_confirm": "..." }`.
+
+Para evitar quedarse sin acceso: un administrador no puede desactivarse
+ni quitarse el rol a sí mismo, y solo un superusuario puede modificar a
+otro superusuario.
 
 ### `POST /api/users/register/`
 
 Registro público con `role=PACIENTE`. **No lo necesita el frontend de
 pacientes** (el paciente no tiene cuenta); queda por compatibilidad.
-Los usuarios DOCTOR/ADMIN los crea un administrador desde `/admin/`.
 
 ---
 
 ## 3. Doctores
 
-**Público** para leer (el paciente elige doctor sin login); solo
-**ADMIN** puede crear/editar/borrar.
+**Público** para leer (el paciente elige doctor sin login). Escribir
+según los permisos de Django sobre Doctor: los administradores crean y
+editan; borrar, solo el superusuario (a un doctor se lo desactiva). Para
+dar de alta un doctor con su usuario, usar `POST /api/users/`.
 
 ### `GET /api/doctors/` 📄
 
@@ -159,8 +226,8 @@ Cada resultado:
   "created_at": "2026-09-20T10:00:00-03:00"
 }
 ```
-Un usuario anónimo (paciente) o un doctor que no sea ADMIN **solo ve
-doctores con `active: true`** en el listado.
+Quien no administra (paciente anónimo incluido) **solo ve doctores con
+`active: true`** en el listado.
 
 ### `GET /api/doctors/{id}/`
 
@@ -168,7 +235,7 @@ Mismo shape que arriba, un solo doctor. Público.
 
 ### `POST` / `PUT` / `PATCH` / `DELETE /api/doctors/{id}/`
 
-Solo ADMIN (con token). `POST`/`PUT`/`PATCH` body: `user` (id de un
+Con token y el permiso correspondiente. `POST`/`PUT`/`PATCH` body: `user` (id de un
 `User` con `role=DOCTOR`), `specialty`, `appointment_duration_minutes`,
 `active`.
 
@@ -214,7 +281,9 @@ Los días sin disponibilidad simplemente no aparecen. `400` si faltan
 ## 5. Horarios semanales y bloqueos (doctor/admin)
 
 Estos SÍ requieren login (son gestión interna, no los usa el
-frontend de pacientes). Un DOCTOR solo ve/edita los suyos; ADMIN, todos.
+frontend de pacientes). Qué acción se permite lo deciden los permisos de
+Django sobre cada modelo; un doctor solo ve/edita los suyos, un
+administrador los de cualquier doctor.
 
 ### `GET/POST /api/weekly-schedules/` 📄
 
@@ -222,8 +291,8 @@ Filtros: `?doctor=<id>`, `?weekday=0..6`, `?active=true`.
 ```json
 { "id": 5, "doctor": 1, "weekday": 0, "weekday_display": "Lunes", "start_time": "09:00:00", "end_time": "12:00:00", "active": true }
 ```
-`weekday`: `0`=lunes … `6`=domingo. Un DOCTOR no manda `doctor` al
-crear (se asigna solo, el suyo); un ADMIN sí debe indicarlo.
+`weekday`: `0`=lunes … `6`=domingo. Un doctor no manda `doctor` al
+crear (se asigna solo, el suyo); un administrador sí debe indicarlo.
 
 `GET/PUT/PATCH/DELETE /api/weekly-schedules/{id}/` — igual esquema.
 
@@ -294,27 +363,45 @@ aprobación previa del doctor).
 - Fecha en el pasado: `{"start_datetime": ["No se puede reservar un horario en el pasado."]}`
 - Documento inválido: `{"document_number": ["..."]}`
 
-### `GET /api/patients/{document_number}/appointments/` 📄 — consultar mis turnos
+### `GET /api/patients/{document_number}/appointments/` 📄 — mis consultas futuras
 
-Lista los turnos de ese paciente (todos los estados), orden
-descendente por fecha. `404` si esa cédula nunca reservó nada.
-
-### `PATCH /api/patients/{document_number}/appointments/{id}/` — editar / reprogramar
-
-Body (uno o ambos campos, todos opcionales):
+Solo las consultas **futuras y pendientes** de esa cédula (no las
+pasadas, atendidas ni canceladas), en orden cronológico. Como basta la
+CI, devuelve lo mínimo para gestionarlas (**PublicAppointment**, sin
+nombre del paciente ni motivo):
 ```json
-{ "start_datetime": "2026-10-06T10:00:00-03:00", "notes": "Cambio de horario" }
+{
+  "id": 10, "doctor": 1, "doctor_name": "Ana López", "doctor_specialty": "Ortodoncia",
+  "start_datetime": "2026-10-18T09:30:00-03:00", "end_datetime": "2026-10-18T10:00:00-03:00",
+  "status": "CONFIRMADA", "can_modify": true
+}
 ```
-Revalida disponibilidad y el límite de un turno por día (excluyendo el
-turno que se está editando). Devuelve el **Appointment** actualizado.
-`400` si la cita ya no está `CONFIRMADA`, ya pasó, o el horario nuevo
-no está disponible. `404` si esa cédula no tiene esa cita.
+`404` si esa cédula nunca fue registrada.
+
+### `PATCH /api/patients/{document_number}/appointments/{id}/` — modificar
+
+Body (todo opcional):
+```json
+{ "doctor": 2, "start_datetime": "2026-10-20T10:00:00-03:00", "notes": "..." }
+```
+- Para **cambiar de doctor** hay que mandar también `start_datetime`
+  (los horarios son de cada doctor).
+- Revalida la disponibilidad del doctor elegido y el límite de un turno
+  por día. El horario anterior queda libre y el recordatorio por correo
+  se reprograma.
+- **Solo mientras la consulta sea futura y esté pendiente**: si su hora
+  ya llegó o pasó responde `400` (`"Esta consulta ya no se puede
+  modificar..."`), aunque el frontend haya mostrado el botón.
+
+Devuelve el **PublicAppointment** actualizado. `404` si esa cédula no
+tiene esa cita.
 
 ### `PATCH /api/patients/{document_number}/appointments/{id}/cancel/` — cancelar
 
 Sin body (o `{}`). Pasa la cita a `CANCELADA` y libera el horario.
-`400` si ya no está `CONFIRMADA` o ya pasó. `404` si esa cédula no
-tiene esa cita.
+Misma regla que modificar: `400` si ya no está pendiente o su hora ya
+llegó. `404` si esa cédula no tiene esa cita. (El portal público no lo
+ofrece por ahora.)
 
 ---
 
@@ -324,8 +411,9 @@ Requieren login.
 
 ### `GET /api/appointments/agenda/?date=YYYY-MM-DD` — agenda de un día
 
-- Un **DOCTOR** ve su propia agenda automáticamente.
-- Un **ADMIN** debe indicar `?doctor=<id>` además de `?date=`.
+- Un doctor ve su propia agenda automáticamente.
+- Un usuario con el permiso que además administra (p. ej. el
+  superusuario) puede indicar `?doctor=<id>`.
 - `date` es opcional (default: hoy).
 
 Respuesta `200` (no pagina, shape fijo):
@@ -337,11 +425,16 @@ Respuesta `200` (no pagina, shape fijo):
 }
 ```
 
+### `GET /api/appointments/upcoming/` 📄 — próximas consultas
+
+Consultas pendientes del doctor desde ahora en adelante, en orden
+cronológico (array de **Appointment**). Mismo `?doctor=` que la agenda.
+
 ### `PATCH /api/appointments/{id}/status/` — marcar atendida / no asistió / cancelar
 
 Body: `{ "status": "ATENDIDA" }` (o `"NO_ASISTIO"` / `"CANCELADA"`).
-Solo el doctor dueño de la cita o un ADMIN. Devuelve el **Appointment**
-actualizado. `403` si no es el dueño ni admin.
+Solo el doctor dueño de la cita (o un administrador con el permiso).
+Devuelve el **Appointment** actualizado. `403` si no.
 
 ---
 
@@ -349,13 +442,17 @@ actualizado. `403` si no es el dueño ni admin.
 
 Requieren login. El paciente en sí nunca llama a estos endpoints.
 
-### `GET /api/patients/` 📄 — "mis pacientes"
+### `GET /api/patients/?search=<nombre o CI>` 📄 — "mis pacientes"
 
-Un **DOCTOR** ve solo los pacientes con los que tuvo al menos un turno;
-un **ADMIN** ve todos.
+Un doctor ve solo los pacientes con los que tuvo al menos un turno (el
+superusuario, todos). El grupo Administradores no tiene acceso a datos
+clínicos.
 ```json
-{ "document_number": "12345678", "name": "Juan Pérez", "phone": "099123456", "email": "juan@example.com", "created_at": "2026-09-27T18:00:00-03:00" }
+{ "document_number": "12345678", "name": "Juan Pérez", "phone": "099123456", "email": "juan@example.com", "created_at": "2026-09-27T18:00:00-03:00", "last_visit": "2026-09-12T10:00:00-03:00" }
 ```
+`last_visit`: última consulta **atendida** (con cualquier doctor); si
+nunca se marcó ninguna, el último turno pasado no cancelado; `null` si
+no hay.
 
 ### `GET /api/patients/{document_number}/` — ficha completa
 
@@ -368,28 +465,31 @@ historial de tratamientos, en una sola llamada:
   "phone": "099123456",
   "email": "juan@example.com",
   "created_at": "2026-09-27T18:00:00-03:00",
+  "last_visit": "2026-09-12T10:00:00-03:00",
   "appointments": [ /* array de Appointment */ ],
   "treatment_records": [ /* array de TreatmentRecord, ver abajo */ ]
 }
 ```
-Un **DOCTOR** solo puede abrir la ficha de un paciente que tuvo al
-menos un turno con él (`403` si no). Un **ADMIN** ve cualquiera.
+Un doctor solo puede abrir la ficha de un paciente que tuvo al menos un
+turno con él (`403` si no).
 
 ### `GET/POST /api/patients/{document_number}/treatments/` 📄 — historial de tratamientos
 
-`GET`: lista de tratamientos de ese paciente (de cualquier doctor —
-historial clínico compartido dentro de la clínica).
+`GET`: tratamientos de ese paciente, de cualquier doctor (historial
+compartido dentro de la clínica), del más reciente al más viejo. Misma
+regla de acceso que la ficha.
 ```json
-{ "id": 4, "patient": "12345678", "doctor": 1, "doctor_name": "Ana López", "appointment": 10, "reason": "Control general", "description": "Evolución favorable.", "treatment": "Continuar tratamiento actual.", "created_at": "2026-09-27T18:00:00-03:00" }
+{ "id": 4, "patient": "12345678", "doctor": 1, "doctor_name": "Ana López", "appointment": 10, "date": "2026-09-12T10:00:00-03:00", "reason": "Control general", "description": "Evolución favorable.", "treatment": "Continuar tratamiento actual.", "created_at": "2026-09-27T18:00:00-03:00" }
 ```
+- `date`: fecha del registro = la de la consulta asociada (`appointment`)
+  o, si no tiene, la de carga.
 - `reason`: motivo / tipo de consulta (opcional).
 - `description`: **observaciones** (obligatorio).
 - `treatment`: tratamiento / indicaciones (opcional).
 
 `POST` body: `{ "reason": "...", "description": "...", "treatment": "...", "appointment": 10 }`
-(todo opcional salvo `description`). Un **DOCTOR** queda asignado
-automáticamente como autor; un **ADMIN** debe mandar además
-`"doctor": <id>` en el body.
+(todo opcional salvo `description`; `appointment` tiene que ser un turno
+de ese mismo paciente, si no `400`). El doctor logueado queda como autor.
 
 ---
 
@@ -420,11 +520,11 @@ sesión.
 3. `POST /api/appointments/` con los 4 datos del paciente + `doctor` + `start_datetime` elegidos.
 4. Guardar en el frontend (o mostrarle al paciente) su `document_number` — es lo único que necesita para volver más adelante.
 
-### B) Paciente vuelve a consultar/cancelar
+### B) Paciente consulta y modifica una consulta futura
 
-1. `GET /api/patients/{document_number}/appointments/` → mostrar su lista de turnos.
-2. Si quiere cancelar: `PATCH /api/patients/{document_number}/appointments/{id}/cancel/`.
-3. Si quiere reprogramar: repetir el paso 2 del flujo A para elegir nuevo horario, después `PATCH /api/patients/{document_number}/appointments/{id}/` con el `start_datetime` nuevo.
+1. `GET /api/patients/{document_number}/appointments/` → sus consultas futuras.
+2. Para modificar una con `can_modify: true`: elegir doctor y horario como en el flujo A (`available-days` + `availability`).
+3. `PATCH /api/patients/{document_number}/appointments/{id}/` con `start_datetime` (y `doctor`, si cambia).
 
 ### C) Doctor revisa su día e historial de un paciente
 

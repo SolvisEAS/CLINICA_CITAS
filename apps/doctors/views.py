@@ -1,6 +1,6 @@
 from rest_framework import permissions, viewsets
 
-from core.permissions import IsAdminRole
+from core.permissions import ModelPermissions, is_admin
 
 from .models import Doctor
 from .serializers import DoctorSerializer
@@ -12,7 +12,9 @@ class DoctorViewSet(viewsets.ModelViewSet):
     paciente necesita ver la lista de doctores para reservar y no
     tiene cuenta).
 
-    POST/PUT/PATCH/DELETE — solo ADMIN.
+    POST/PUT/PATCH/DELETE — según los permisos de Django sobre Doctor
+    (grupo Administradores: crear y editar; borrar, solo el superusuario:
+    a un doctor se lo desactiva, no se lo elimina).
     """
 
     queryset = Doctor.objects.select_related("user").all()
@@ -24,15 +26,12 @@ class DoctorViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ("list", "retrieve"):
             return [permissions.AllowAny()]
-        return [permissions.IsAuthenticated(), IsAdminRole()]
+        return [permissions.IsAuthenticated(), ModelPermissions()]
 
     def get_queryset(self):
         qs = super().get_queryset()
-        user = self.request.user
-        # Solo un ADMIN o DOCTOR autenticado necesita ver los inactivos
-        # también; cualquier otra persona (paciente sin cuenta incluido)
-        # solo ve los activos al listar.
-        is_staff = user.is_authenticated and user.role in ("ADMIN", "DOCTOR")
-        if self.action == "list" and not is_staff:
+        # Solo un administrador necesita ver también los inactivos; el
+        # resto (paciente sin cuenta incluido) ve los activos al listar.
+        if self.action == "list" and not is_admin(self.request.user):
             qs = qs.filter(active=True)
         return qs

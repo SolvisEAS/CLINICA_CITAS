@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.doctors.models import Doctor
-from core.permissions import IsAdminOrOwnerDoctor
+from core.permissions import ModelPermissions, OwnDoctorObjects, get_doctor_profile, is_admin
 
 from .models import AvailabilityException, WeeklySchedule
 from .serializers import (
@@ -20,21 +20,30 @@ from .services import get_available_slots
 
 class DoctorOwnedMixin:
     """
-    Un DOCTOR siempre opera sobre su propio perfil (se ignora cualquier
-    `doctor` que mande); un ADMIN tiene que indicar `doctor` al crear.
+    Qué acción se puede hacer lo deciden los permisos de Django sobre el
+    modelo; sobre qué objetos, esta regla: un administrador opera sobre
+    cualquier doctor (y tiene que indicar `doctor` al crear); un doctor,
+    solo sobre su propio perfil (se ignora cualquier `doctor` que mande).
     """
 
+    permission_classes = [permissions.IsAuthenticated, ModelPermissions, OwnDoctorObjects]
+
+    def get_queryset(self):
+        qs = self.queryset.select_related("doctor", "doctor__user")
+        if not is_admin(self.request.user):
+            qs = qs.filter(doctor__user=self.request.user)
+        return qs
+
     def _save_with_doctor(self, serializer, creating):
-        user = self.request.user
-        if user.role == "DOCTOR":
-            doctor = Doctor.objects.filter(user=user).first()
-            if not doctor:
-                raise ValidationError({"doctor": "Tu usuario no tiene un perfil de doctor asociado."})
-            serializer.save(doctor=doctor)
-        else:
+        if is_admin(self.request.user):
             if creating and not serializer.validated_data.get("doctor"):
                 raise ValidationError({"doctor": "Indicá el doctor."})
             serializer.save()
+            return
+        doctor = get_doctor_profile(self.request.user)
+        if not doctor:
+            raise ValidationError({"doctor": "Tu usuario no tiene un perfil de doctor asociado."})
+        serializer.save(doctor=doctor)
 
     def perform_create(self, serializer):
         self._save_with_doctor(serializer, creating=True)
@@ -44,36 +53,19 @@ class DoctorOwnedMixin:
 
 
 class WeeklyScheduleViewSet(DoctorOwnedMixin, viewsets.ModelViewSet):
-    """
-    Gestión del horario semanal habitual de un doctor.
-    ADMIN puede gestionar cualquiera; un DOCTOR solo el suyo propio.
-    """
+    """Horario semanal habitual de un doctor."""
 
+    queryset = WeeklySchedule.objects.all()
     serializer_class = WeeklyScheduleSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAdminOrOwnerDoctor]
     filterset_fields = ["doctor", "weekday", "active"]
-
-    def get_queryset(self):
-        qs = WeeklySchedule.objects.select_related("doctor", "doctor__user").all()
-        user = self.request.user
-        if user.role == "DOCTOR":
-            qs = qs.filter(doctor__user=user)
-        return qs
 
 
 class AvailabilityExceptionViewSet(DoctorOwnedMixin, viewsets.ModelViewSet):
-    """Bloqueos/ausencias puntuales de un doctor (mismo esquema de permisos)."""
+    """Bloqueos/ausencias puntuales de un doctor."""
 
+    queryset = AvailabilityException.objects.all()
     serializer_class = AvailabilityExceptionSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAdminOrOwnerDoctor]
     filterset_fields = ["doctor", "type"]
-
-    def get_queryset(self):
-        qs = AvailabilityException.objects.select_related("doctor", "doctor__user").all()
-        user = self.request.user
-        if user.role == "DOCTOR":
-            qs = qs.filter(doctor__user=user)
-        return qs
 
 
 class DoctorAvailabilityView(APIView):
