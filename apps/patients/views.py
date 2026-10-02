@@ -131,15 +131,16 @@ class PatientTreatmentRecordsView(generics.ListCreateAPIView):
         if appointment and appointment.patient_id != patient.pk:
             raise ValidationError({"appointment": "Ese turno no es de este paciente."})
 
-        if is_admin(user):
+        # Quien tiene perfil de doctor firma con el suyo; un administrador
+        # sin perfil (p. ej. el superusuario) tiene que indicar el doctor.
+        doctor = get_doctor_profile(user)
+        if not doctor:
+            if not is_admin(user):
+                raise PermissionDenied("Tu usuario no tiene un perfil de doctor asociado.")
             doctor_id = self.request.data.get("doctor")
             doctor = Doctor.objects.filter(pk=doctor_id).first() if doctor_id else None
             if not doctor:
                 raise ValidationError({"doctor": "Indicá qué doctor firma el registro."})
-        else:
-            doctor = get_doctor_profile(user)
-            if not doctor:
-                raise PermissionDenied("Tu usuario no tiene un perfil de doctor asociado.")
         serializer.save(patient=patient, doctor=doctor)
 
 
