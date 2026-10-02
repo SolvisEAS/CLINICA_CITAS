@@ -6,3 +6,6 @@ class UsersConfig(AppConfig):
     name = "apps.users"
     label = "users"
     verbose_name = "Usuarios"
+
+    def ready(self):
+        from . import signals  # noqa: F401 — registra los receivers

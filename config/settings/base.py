@@ -159,6 +159,17 @@ REST_FRAMEWORK = {
     ),
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 20,
+    # Los endpoints públicos que trabajan con una CI (throttle_scope =
+    # "public_ci") limitan los intentos por IP, para que nadie pueda
+    # recorrer cédulas en masa. A los usuarios logueados se los cuenta
+    # por usuario, no por IP.
+    "DEFAULT_THROTTLE_CLASSES": ("rest_framework.throttling.ScopedRateThrottle",),
+    "DEFAULT_THROTTLE_RATES": {
+        "public_ci": config("PUBLIC_CI_RATE_LIMIT", default="30/minute"),
+    },
+    # Detrás de Nginx todas las requests llegan desde 127.0.0.1: con 1
+    # proxy, DRF toma la IP real del cliente de X-Forwarded-For.
+    "NUM_PROXIES": config("NUM_PROXIES", default=1, cast=int),
 }
 
 # ---------------------------------------------------------------------------

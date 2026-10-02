@@ -19,7 +19,14 @@ MAX_ATTEMPTS = 5
 
 
 def schedule_appointment_notifications(appointment):
-    """Crea la notificación de confirmación (inmediata) y un recordatorio."""
+    """
+    Crea la notificación de confirmación (inmediata) y un recordatorio.
+    El correo del paciente es opcional: sin correo no hay a quién
+    enviarle nada, así que no se registra ninguna tarea.
+    """
+    if not appointment.patient.email:
+        return
+
     Notification.objects.create(
         appointment=appointment,
         channel=Notification.Channel.EMAIL,
@@ -35,6 +42,17 @@ def schedule_appointment_notifications(appointment):
             type=Notification.Type.RECORDATORIO,
             scheduled_at=reminder_at,
         )
+
+
+def reschedule_appointment_notifications(appointment):
+    """
+    La cita cambió de horario (o de doctor): el recordatorio pendiente
+    quedó calculado sobre el horario viejo. Se descartan las tareas
+    todavía no enviadas y se registran confirmación y recordatorio
+    nuevos con los datos actuales.
+    """
+    appointment.notifications.filter(status=Notification.Status.PENDIENTE).delete()
+    schedule_appointment_notifications(appointment)
 
 
 def _build_email(notification):
